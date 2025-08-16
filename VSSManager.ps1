@@ -97,7 +97,7 @@ $xaml = @"
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Shadow ID" Binding="{Binding ShadowID}" Width="200"/>
                             <DataGridTextColumn Header="Creation Time" Binding="{Binding CreationTime}" Width="200"/>
-                            <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="200"/>
+                            <DataGridTextColumn Header="NoWriters" Binding="{Binding NoWriters}" Width="200"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </Grid>
@@ -176,7 +176,7 @@ $window.FindName("btnRefreshShadowCopies").Add_Click({
 				$shadowInfo = [PSCustomObject]@{
 					ShadowID = $copy.ID
 					CreationTime = $created
-					Description = $copy.Description
+					NoWriters = $copy.NoWriters
 					VolumePath = $copy.VolumeName
 				}
 				$shadowCopyList.Add($shadowInfo)

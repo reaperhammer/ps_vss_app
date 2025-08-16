@@ -80,7 +80,7 @@ function Get-VSSShadowCopies {
                 Write-Host "Shadow Copy ID: $($shadow.ID)" -ForegroundColor Yellow
                 Write-Host "  Device Object: $($shadow.DeviceObject)"
                 Write-Host "  Volume Name: $($shadow.VolumeName)"
-                Write-Host "  Creation Time: $($shadow.InstallDate)"
+                Write-Host "  Creation Time: $($shadow.ConvertToDateTime($shadow.InstallDate).ToLocalTime().Tostring())" 
                 Write-Host "  State: $($shadow.State)"
                 Write-Host "  Persistent: $($shadow.Persistent)"
                 Write-Host "  Client Accessible: $($shadow.ClientAccessible)"
@@ -193,7 +193,7 @@ function Remove-VSSShadowCopy {
             if ($Confirm) {
                 Write-Host "The following shadow copies will be deleted:" -ForegroundColor Red
                 foreach ($shadow in $shadowCopies) {
-                    Write-Host "  ID: $($shadow.ID) - Created: $($shadow.InstallDate)" -ForegroundColor Yellow
+                    Write-Host "  ID: $($shadow.ID) - Created: $($shadow.ConvertToDateTime($shadow.InstallDate).ToLocalTime().Tostring())" -ForegroundColor Yellow
                 }
                 
                 $confirmation = Read-Host "`nAre you sure you want to proceed with deletion? (Y/N)"
