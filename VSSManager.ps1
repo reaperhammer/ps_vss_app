@@ -197,11 +197,29 @@ $xaml = @"
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Drive" Binding="{Binding DriveLetter}" Width="80"/>
-                            <DataGridTextColumn Header="Volume Name" Binding="{Binding VolumeName}" Width="200"/>
-                            <DataGridTextColumn Header="File System" Binding="{Binding FileSystem}" Width="120"/>
-                            <DataGridTextColumn Header="Capacity (GB)" Binding="{Binding CapacityGB}" Width="120"/>
-                            <DataGridTextColumn Header="Free Space (GB)" Binding="{Binding FreeSpaceGB}" Width="140"/>
+                            <DataGridTextColumn Header="Drive" Binding="{Binding DriveLetter}" Width="60"/>
+                            <DataGridTextColumn Header="Volume Name" Binding="{Binding VolumeName}" Width="180"/>
+                            <DataGridTextColumn Header="File System" Binding="{Binding FileSystem}" Width="100"/>
+                            <DataGridTemplateColumn Header="Usage" Width="120">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <ProgressBar Value="{Binding UsagePercent}" 
+                                                        Width="60" Height="8" 
+                                                        Background="#E0E0E0"
+                                                        Foreground="{Binding UsageColor}"
+                                                        Margin="0,0,8,0"/>
+                                            <TextBlock Text="{Binding UsagePercentText}" 
+                                                      VerticalAlignment="Center"
+                                                      FontSize="10"
+                                                      Foreground="{StaticResource TextSecondaryBrush}"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Capacity (GB)" Binding="{Binding CapacityGB}" Width="100"/>
+                            <DataGridTextColumn Header="Free Space (GB)" Binding="{Binding FreeSpaceGB}" Width="120"/>
+                            <DataGridTextColumn Header="Used Space (GB)" Binding="{Binding UsedSpaceGB}" Width="120"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </Grid>
@@ -262,10 +280,27 @@ $xaml = @"
                             <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource ModernDataGridColumnHeaderStyle}"/>
                         </DataGrid.ColumnHeaderStyle>
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="Shadow ID" Binding="{Binding ShadowID}" Width="300"/>
-                            <DataGridTextColumn Header="Creation Time" Binding="{Binding CreationTime}" Width="180"/>
-                            <DataGridTextColumn Header="No Writers" Binding="{Binding NoWriters}" Width="100"/>
-                            <DataGridTextColumn Header="State" Binding="{Binding State}" Width="120"/>
+                            <DataGridTextColumn Header="Shadow ID" Binding="{Binding ShadowID}" Width="250"/>
+                            <DataGridTextColumn Header="Creation Time" Binding="{Binding CreationTime}" Width="160"/>
+                            <DataGridTemplateColumn Header="State" Width="100">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{Binding StateColor}" 
+                                                CornerRadius="12" 
+                                                Padding="8,2" 
+                                                HorizontalAlignment="Center">
+                                            <TextBlock Text="{Binding State}" 
+                                                      Foreground="White" 
+                                                      FontSize="10" 
+                                                      FontWeight="SemiBold"
+                                                      HorizontalAlignment="Center"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="No Writers" Binding="{Binding NoWriters}" Width="90"/>
+                            <DataGridTextColumn Header="Size (MB)" Binding="{Binding SizeMB}" Width="100"/>
+                            <DataGridTextColumn Header="Age" Binding="{Binding Age}" Width="80"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </Grid>
@@ -439,12 +474,29 @@ $window.FindName("btnRefreshVolumes").Add_Click({
 			$progressPercent = [math]::Round(($currentVolume / $totalVolumes) * 100)
 			Update-Progress $progressPercent "Processing volume $currentVolume of $totalVolumes"
 			
+			# Calculate usage statistics
+			$capacityGB = [math]::Round($vol.Capacity / 1GB, 2)
+			$freeSpaceGB = [math]::Round($vol.FreeSpace / 1GB, 2)
+			$usedSpaceGB = [math]::Round(($vol.Capacity - $vol.FreeSpace) / 1GB, 2)
+			$usagePercent = if ($vol.Capacity -gt 0) { [math]::Round((($vol.Capacity - $vol.FreeSpace) / $vol.Capacity) * 100, 1) } else { 0 }
+			
+			# Determine usage color based on percentage
+			$usageColor = switch ($usagePercent) {
+				{ $_ -lt 70 } { "#4CAF50" }  # Green for low usage
+				{ $_ -lt 85 } { "#FF9800" }  # Orange for medium usage
+				default { "#F44336" }         # Red for high usage
+			}
+			
 			$volumeInfo = [PSCustomObject]@{
 				DriveLetter = $vol.DriveLetter
 				VolumeName = if ($vol.Label) { $vol.Label } else { "Local Disk" }
 				FileSystem = $vol.FileSystem
-				CapacityGB = [math]::Round($vol.Capacity / 1GB, 2)
-				FreeSpaceGB = [math]::Round($vol.FreeSpace / 1GB, 2)
+				CapacityGB = $capacityGB
+				FreeSpaceGB = $freeSpaceGB
+				UsedSpaceGB = $usedSpaceGB
+				UsagePercent = $usagePercent
+				UsagePercentText = "$usagePercent%"
+				UsageColor = $usageColor
 				DeviceID = $vol.DeviceID
 			}
 			$volumeList.Add($volumeInfo)
@@ -482,15 +534,40 @@ $window.FindName("btnRefreshShadowCopies").Add_Click({
 				Update-Progress $progressPercent "Processing shadow copy $currentCopy of $totalCopies"
 				
 				$created = try { 
-					[System.Management.ManagementDateTimeConverter]::ToDateTime($copy.InstallDate).ToString("yyyy-MM-dd HH:mm:ss")
+					[System.Management.ManagementDateTimeConverter]::ToDateTime($copy.InstallDate)
 				} catch { 
-					$copy.InstallDate 
+					Get-Date $copy.InstallDate
 				}
+				
+				# Calculate age
+				$age = if ($created) {
+					$timespan = (Get-Date) - $created
+					if ($timespan.Days -gt 0) { "$($timespan.Days)d" }
+					elseif ($timespan.Hours -gt 0) { "$($timespan.Hours)h" }
+					elseif ($timespan.Minutes -gt 0) { "$($timespan.Minutes)m" }
+					else { "<1m" }
+				} else { "Unknown" }
+				
+				# Determine state color
+				$stateColor = switch ($copy.State) {
+					"Created" { "#4CAF50" }      # Green
+					"Active" { "#2196F3" }       # Blue
+					"Preparing" { "#FF9800" }    # Orange
+					"Failed" { "#F44336" }       # Red
+					default { "#757575" }         # Gray
+				}
+				
+				# Estimate size (this is approximate as VSS doesn't provide exact size)
+				$sizeMB = if ($copy.Size) { [math]::Round($copy.Size / 1MB, 1) } else { "N/A" }
+				
 				$shadowInfo = [PSCustomObject]@{
 					ShadowID = $copy.ID
-					CreationTime = $created
+					CreationTime = if ($created) { $created.ToString("yyyy-MM-dd HH:mm:ss") } else { "Unknown" }
 					NoWriters = $copy.NoWriters
 					State = $copy.State
+					StateColor = $stateColor
+					SizeMB = $sizeMB
+					Age = $age
 					VolumePath = $copy.VolumeName
 				}
 				$shadowCopyList.Add($shadowInfo)
