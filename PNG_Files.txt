@@ -85,6 +85,62 @@ All PNG files should be placed in: `.\assets\png\`
 - **Usage:** Status bar info messages
 - **Description:** Blue circle with "i" or information symbol
 
+### 11. Properties Icon
+- **File Name:** `properties.png`
+- **Size:** 16x16 pixels
+- **Resolution:** 96 DPI
+- **Purpose:** View properties context menu item
+- **Usage:** Context menu for viewing item properties
+- **Description:** Document with gear or settings icon
+
+### 12. Explorer Icon
+- **File Name:** `explorer.png`
+- **Size:** 16x16 pixels
+- **Resolution:** 96 DPI
+- **Purpose:** Open in Explorer context menu item
+- **Usage:** Context menu for opening items in Windows Explorer
+- **Description:** Folder or file explorer icon
+
+### 13. Copy Icon
+- **File Name:** `copy.png`
+- **Size:** 16x16 pixels
+- **Resolution:** 96 DPI
+- **Purpose:** Copy to clipboard context menu items
+- **Usage:** Context menu for copying text to clipboard
+- **Description:** Two overlapping rectangles or copy symbol
+
+### 14. Info Dialog Icon
+- **File Name:** `info.png`
+- **Size:** 32x32 pixels
+- **Resolution:** 96 DPI
+- **Purpose:** Information dialog icon
+- **Usage:** Modern dialog boxes for information messages
+- **Description:** Blue circle with "i" or information symbol
+
+### 15. Warning Dialog Icon
+- **File Name:** `warning.png`
+- **Size:** 32x32 pixels
+- **Resolution:** 96 DPI
+- **Purpose:** Warning dialog icon
+- **Usage:** Modern dialog boxes for warning messages
+- **Description:** Yellow triangle with exclamation mark
+
+### 16. Error Dialog Icon
+- **File Name:** `error.png`
+- **Size:** 32x32 pixels
+- **Resolution:** 96 DPI
+- **Purpose:** Error dialog icon
+- **Usage:** Modern dialog boxes for error messages
+- **Description:** Red circle with X or error symbol
+
+### 17. Question Dialog Icon
+- **File Name:** `question.png`
+- **Size:** 32x32 pixels
+- **Resolution:** 96 DPI
+- **Purpose:** Question/confirmation dialog icon
+- **Usage:** Modern dialog boxes for confirmation questions
+- **Description:** Blue circle with question mark
+
 ## Icon Design Guidelines
 
 ### Color Scheme
@@ -115,7 +171,13 @@ All PNG files should be placed in: `.\assets\png\`
 1. **High Priority:** refresh.png, create.png, delete.png (core functionality)
 2. **Medium Priority:** volume.png, shadowcopy.png (tab icons)
 3. **Low Priority:** status icons and app_icon.png (enhancement)
+4. **Context Menu Icons:** properties.png, explorer.png, copy.png (new for context menus)
+
+## New Icons Needed for Context Menus
+- **properties.png** - For "View Properties" menu items
+- **explorer.png** - For "Open in Explorer" menu items  
+- **copy.png** - For "Copy to Clipboard" menu items
 
 ---
 *Generated: 2024-12-19*
-*Total Icons Required: 10*
+*Total Icons Required: 17*

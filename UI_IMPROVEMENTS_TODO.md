@@ -22,7 +22,7 @@ This document tracks the progress of modernizing the VSS Manager PowerShell appl
 ### ⚙️ Advanced Features
 - [ ] **Implement dark/light theme** - Theme switching capability
 - [✅] **Enhance volume display** - Progress bars for disk usage, better formatting *(Completed: 2024-12-19)*
-- [ ] **Add context menus** - Right-click functionality
+- [✅] **Add context menus** - Right-click functionality *(Completed: 2024-12-19)*
 - [✅] **Improve shadow copy info** - Better formatting and additional details *(Completed: 2024-12-19)*
 - [ ] **Add keyboard shortcuts** - Common operations shortcuts
 - [ ] **Optimize layout spacing** - Better visual balance and spacing
