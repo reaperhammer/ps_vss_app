@@ -302,9 +302,54 @@ $xaml = @"
 
 # Function to load XAML and create window
 function Load-Xaml {
-	# Get the script directory and create absolute paths for images
-	$scriptDir = Split-Path $MyInvocation.MyCommand.Path
+	# Get the script directory - try multiple methods to ensure we get the right path
+	$scriptDir = $null
+	
+	# Method 1: Try MyInvocation (works when script is run directly)
+	if ($MyInvocation.MyCommand.Path) {
+		$scriptDir = Split-Path $MyInvocation.MyCommand.Path
+		Write-Host "Using MyInvocation path: $scriptDir"
+	}
+	# Method 2: Try PSScriptRoot (works in most contexts)
+	elseif ($PSScriptRoot) {
+		$scriptDir = $PSScriptRoot
+		Write-Host "Using PSScriptRoot path: $scriptDir"
+	}
+	# Method 3: Try to find the script in the current directory
+	else {
+		$currentDir = Get-Location
+		$scriptPath = Join-Path $currentDir "VSSManager.ps1"
+		if (Test-Path $scriptPath) {
+			$scriptDir = $currentDir
+			Write-Host "Using current directory path: $scriptDir"
+		} else {
+			Write-Warning "Could not determine script directory, using current location"
+			$scriptDir = $currentDir
+		}
+	}
+	
 	$assetsPath = Join-Path $scriptDir "assets\png"
+	
+	Write-Host "Final script directory: $scriptDir"
+	Write-Host "Assets path: $assetsPath"
+	
+	# Verify assets directory exists
+	if (-not (Test-Path $assetsPath)) {
+		Write-Warning "Assets directory not found: $assetsPath"
+		Write-Host "Creating assets directory..."
+		New-Item -ItemType Directory -Path $assetsPath -Force | Out-Null
+	}
+	
+	# Check if PNG files exist
+	$requiredFiles = @("refresh.png", "create.png", "delete.png", "volume.png", "shadowcopy.png", "app_icon.png")
+	foreach ($file in $requiredFiles) {
+		$filePath = Join-Path $assetsPath $file
+		if (-not (Test-Path $filePath)) {
+			Write-Warning "Required PNG file not found: $filePath"
+		} else {
+			Write-Host "Found PNG file: $filePath"
+		}
+	}
 	
 	# Replace relative paths with absolute paths in XAML
 	$xamlWithPaths = $xaml -replace '\.\\assets\\png\\', "$assetsPath\"
