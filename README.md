@@ -1,0 +1,128 @@
+# VSS Manager - Volume Shadow Copy Service Manager
+
+A modern PowerShell-based application for managing Windows Volume Shadow Copy Service (VSS) with both command-line and graphical user interfaces.
+
+## Features
+
+### 🖥️ Modern WPF GUI
+- **Volume Management Tab**: View all VSS-supported volumes with detailed statistics
+- **Shadow Copy Operations Tab**: Create, view, and delete shadow copies
+- **Real-time Progress Tracking**: Visual progress indicators for all operations
+- **Usage Statistics**: Color-coded volume capacity bars and usage percentages
+
+### 📋 Core Functionality
+- **List VSS-Supported Volumes**: Display all volumes that support shadow copies
+- **View Shadow Copies**: Show existing shadow copies with creation time, state, and age
+- **Create Shadow Copies**: Generate new volume snapshots with progress tracking  
+- **Delete Shadow Copies**: Remove individual or all shadow copies for a volume
+- **Volume Statistics**: Display capacity, free space, usage percentages, and file systems
+
+## Requirements
+
+- **Windows 10/11** (or Windows Server equivalent)
+- **Windows PowerShell 5.1** (not compatible with PowerShell 7/Core)
+- **Administrator privileges** (required for VSS operations)
+- **.NET Framework** (for WPF GUI components)
+
+## Installation & Usage
+
+### Quick Start
+
+1. **Clone or download** this repository
+2. **Run**: Double click `Launch.bat`
+3. The application will automatically launch the GUI interface
+
+### Command Line Usage
+
+You can also use the core functions directly in PowerShell:
+
+```powershell
+# Import the functions
+. .\main.ps1
+
+# List all VSS-supported volumes
+Get-VSSSupportedVolumes
+
+# View shadow copies for C: drive
+Get-VSSShadowCopies -VolumePath "C"
+
+# Create a new shadow copy
+New-VSSShadowCopy -VolumePath "C:"
+
+# Remove shadow copies (with confirmation)
+Remove-VSSShadowCopy -VolumePath "C:"
+```
+
+### GUI Interface
+
+The GUI provides two main tabs:
+
+#### Volume Management
+- View all available volumes with detailed information
+- Color-coded usage indicators (Green < 70%, Orange < 85%, Red ≥ 85%)
+- Select volumes for shadow copy operations
+
+#### Shadow Copy Operations  
+- View existing shadow copies for selected volumes
+- Create new shadow copies with progress tracking
+- Delete selected shadow copies with confirmation dialogs
+- Real-time status updates and operation feedback
+
+## File Structure
+
+```
+ps_vss_app/
+├── main.ps1           # Core VSS functions
+├── VSSManager.ps1     # WPF GUI application
+├── Launch.bat         # Batch file launcher
+├── LICENSE           # Apache 2.0 License
+└── assets/png/       # GUI icons and images
+```
+
+## Compatibility Notes
+
+- **PowerShell Version**: This application requires Windows PowerShell 5.1 and will not work with PowerShell 7 (Core)
+- **Platform**: Windows-only (uses Windows Management Instrumentation)
+- **Architecture**: Compatible with both x64 and x86 Windows systems
+
+## Troubleshooting
+
+### Common Issues
+
+1. **"Script cannot be loaded" error**
+   - Run: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
+
+2. **"Access Denied" errors**
+   - Ensure you're running as Administrator
+   - Check that VSS service is running: `sc query vss`
+
+3. **GUI doesn't appear**
+   - Verify you're using Windows PowerShell 5.1 (not PowerShell 7)
+   - Check that .NET Framework is installed
+
+4. **Missing PNG files warning**
+   - The application will create the assets directory automatically
+   - GUI will function without icons, but some visual elements may be missing
+
+## Security & Permissions
+
+This application requires administrative privileges because:
+- Volume Shadow Copy operations require elevated permissions
+- WMI queries for system volume information need admin access
+- Shadow copy creation/deletion affects system-level services
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) file for details.
+
+## Contributing
+
+This is a system administration tool for Windows VSS management. Contributions should focus on:
+- Improving error handling and user experience
+- Adding additional VSS-related functionality
+- Enhancing the GUI interface
+- Bug fixes and performance improvements
+
+---
+
+**⚠️ Important**: Always test shadow copy operations in a non-production environment first. Volume Shadow Copy operations can affect system performance and disk space.
