@@ -115,7 +115,7 @@ $xaml = @"
             <Setter Property="RowBackground" Value="{StaticResource SurfaceBrush}"/>
             <Setter Property="AlternatingRowBackground" Value="#FAFAFA"/>
             <Setter Property="HeadersVisibility" Value="Column"/>
-            <Setter Property="SelectionMode" Value="Single"/>
+            <Setter Property="SelectionMode" Value="Extended"/>
             <Setter Property="SelectionUnit" Value="FullRow"/>
             <Setter Property="CanUserAddRows" Value="False"/>
             <Setter Property="CanUserDeleteRows" Value="False"/>
@@ -280,7 +280,7 @@ $xaml = @"
                                     </StackPanel>
                                 </Button>
                             </StackPanel>
-                            <TextBlock Name="txtSelectedVolume" Text="No volume selected" 
+                            <TextBlock Name="txtSelectedVolume" Text="No volumes selected" 
                                       Foreground="{StaticResource TextSecondaryBrush}"
                                       FontStyle="Italic"/>
                         </StackPanel>
@@ -293,6 +293,7 @@ $xaml = @"
                             <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource ModernDataGridColumnHeaderStyle}"/>
                         </DataGrid.ColumnHeaderStyle>
                         <DataGrid.Columns>
+                            <DataGridTextColumn Header="Volume" Binding="{Binding RequestedVolume}" Width="60"/>
                             <DataGridTextColumn Header="Shadow ID" Binding="{Binding ShadowID}" Width="250"/>
                             <DataGridTextColumn Header="Creation Time" Binding="{Binding CreationTimeText}" Width="160"/>
                             <DataGridTemplateColumn Header="State" Width="100">
@@ -462,21 +463,19 @@ $shadowCopyList = New-Object System.Collections.ObjectModel.ObservableCollection
 $window.FindName("dgVolumes").ItemsSource = $volumeList
 $window.FindName("dgShadowCopies").ItemsSource = $shadowCopyList
 
-# Keep track of selected volume across tabs
-$script:selectedVolumeDeviceId = $null
-$script:selectedVolumeName = $null
+# Keep track of selected volumes across tabs (multi-select)
+$script:selectedVolumes = @()
 $window.FindName("dgVolumes").Add_SelectionChanged({
 	param($sender, $args)
-	$sel = $sender.SelectedItem
-	if ($sel) {
-		$script:selectedVolumeDeviceId = $sel.DeviceID
-		$script:selectedVolumeName = $sel.DriveLetter + " (" + $sel.VolumeName + ")"
-		$window.FindName("txtSelectedVolume").Text = "Selected: " + $script:selectedVolumeName
-		$window.FindName("txtStatus").Text = "Volume selected: " + $script:selectedVolumeName
+	$items = @($sender.SelectedItems)
+	if ($items.Count -gt 0) {
+		$script:selectedVolumes = $items
+		$driveNames = ($items | ForEach-Object { $_.DriveLetter + " (" + $_.VolumeName + ")" }) -join ", "
+		$window.FindName("txtSelectedVolume").Text = "Selected: " + $driveNames
+		$window.FindName("txtStatus").Text = "$($items.Count) volume(s) selected: " + $driveNames
 	} else {
-		$script:selectedVolumeDeviceId = $null
-		$script:selectedVolumeName = $null
-		$window.FindName("txtSelectedVolume").Text = "No volume selected"
+		$script:selectedVolumes = @()
+		$window.FindName("txtSelectedVolume").Text = "No volumes selected"
 		$window.FindName("txtStatus").Text = "Ready"
 	}
 })
@@ -510,31 +509,32 @@ $window.FindName("btnRefreshVolumes").Add_Click({
 
 $window.FindName("btnRefreshShadowCopies").Add_Click({
 	try {
-		$volId = $script:selectedVolumeDeviceId
-		if (-not $volId) {
+		$volumes = @($script:selectedVolumes)
+		if ($volumes.Count -eq 0) {
 			$sel = $window.FindName("dgVolumes").SelectedItem
-			if ($sel) { $volId = $sel.DeviceID }
+			if ($sel) { $volumes = @($sel) }
 		}
-		if ($volId) {
-			Show-Progress "Refreshing shadow copies..." $true
-			
-			$shadowCopies = @(Get-VSSShadowCopies -VolumePath $volId -ErrorAction Stop)
+		if ($volumes.Count -gt 0) {
+			Show-Progress "Refreshing shadow copies for $($volumes.Count) volume(s)..." $true
 			$shadowCopyList.Clear()
 			
-			$totalCopies = $shadowCopies.Count
-			$currentCopy = 0
+			$totalVolumes = $volumes.Count
+			$currentVolumeIdx = 0
 			
-			foreach ($copy in $shadowCopies) {
-				$currentCopy++
-				$progressPercent = if ($totalCopies -gt 0) { [math]::Round(($currentCopy / $totalCopies) * 100) } else { 100 }
-				Update-Progress $progressPercent "Processing shadow copy $currentCopy of $totalCopies"
-				$shadowCopyList.Add($copy)
+			foreach ($vol in $volumes) {
+				$currentVolumeIdx++
+				Update-Progress ([math]::Round(($currentVolumeIdx / $totalVolumes) * 100)) "Querying shadow copies for $($vol.DriveLetter)..."
+				$shadowCopies = @(Get-VSSShadowCopies -VolumePath $vol.DeviceID -ErrorAction Stop)
+				foreach ($copy in $shadowCopies) {
+					$copy | Add-Member -NotePropertyName RequestedVolume -NotePropertyValue $vol.DriveLetter -Force
+					$shadowCopyList.Add($copy)
+				}
 			}
 			
-			Hide-Progress "Shadow copies refreshed - Found $($shadowCopyList.Count) copies"
+			Hide-Progress "Shadow copies refreshed - Found $($shadowCopyList.Count) copies across $($volumes.Count) volume(s)"
 		} else {
-			Hide-Progress "Please select a volume first"
-			[System.Windows.MessageBox]::Show("Please select a volume first", "Information", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+			Hide-Progress "Please select at least one volume first"
+			[System.Windows.MessageBox]::Show("Please select at least one volume first", "Information", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
 		}
 	}
 	catch {
@@ -545,54 +545,68 @@ $window.FindName("btnRefreshShadowCopies").Add_Click({
 
 $window.FindName("btnCreateShadowCopy").Add_Click({
 	try {
-		$volId = $script:selectedVolumeDeviceId
-		if (-not $volId) {
+		$volumes = @($script:selectedVolumes)
+		if ($volumes.Count -eq 0) {
 			$sel = $window.FindName("dgVolumes").SelectedItem
-			if ($sel) { $volId = $sel.DeviceID }
+			if ($sel) { $volumes = @($sel) }
 		}
-		if ($volId) {
-			Show-Progress "Creating shadow copy..." $true
+		if ($volumes.Count -gt 0) {
+			$driveNames = ($volumes | ForEach-Object { $_.DriveLetter }) -join ", "
+			Show-Progress "Creating shadow copies for $($volumes.Count) volume(s)..." $true
 			
-			Update-Progress 25 "Initializing shadow copy creation..."
-			Update-Progress 50 "Creating shadow copy..."
-			$created = New-VSSShadowCopy -VolumePath $volId -Confirm:$false -ErrorAction Stop
+			$totalVolumes = $volumes.Count
+			$currentVolumeIdx = 0
+			$successCount = 0
+			$errors = @()
 			
-			if (-not $created -or -not $created.Success) {
-				throw "Shadow copy creation did not return a successful result."
+			foreach ($vol in $volumes) {
+				$currentVolumeIdx++
+				Update-Progress ([math]::Round(($currentVolumeIdx / $totalVolumes) * 100)) "Creating shadow copy for $($vol.DriveLetter) ($currentVolumeIdx of $totalVolumes)..."
+				try {
+					$created = New-VSSShadowCopy -VolumePath $vol.DeviceID -Confirm:$false -ErrorAction Stop
+					if ($created -and $created.Success) {
+						$successCount++
+					} else {
+						$errors += "$($vol.DriveLetter): Creation did not return a successful result."
+					}
+				} catch {
+					$errors += "$($vol.DriveLetter): $($_.Exception.Message)"
+				}
 			}
 			
-			Update-Progress 100 "Shadow copy created successfully"
-			Hide-Progress "Shadow copy created successfully: $($created.ShadowID)"
+			if ($errors.Count -gt 0) {
+				Hide-Progress "Shadow copies created: $successCount succeeded, $($errors.Count) failed"
+				[System.Windows.MessageBox]::Show("Completed with errors:`n`n" + ($errors -join "`n"), "Partial Failure", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+			} else {
+				Hide-Progress "Shadow copies created successfully for $successCount volume(s)"
+			}
 			# Refresh list after creation
 			$window.FindName("btnRefreshShadowCopies").RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
 		} else {
-			Hide-Progress "Please select a volume first"
-			[System.Windows.MessageBox]::Show("Please select a volume first", "Information", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+			Hide-Progress "Please select at least one volume first"
+			[System.Windows.MessageBox]::Show("Please select at least one volume first", "Information", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
 		}
 	}
 	catch {
-		Hide-Progress "Error creating shadow copy"
-		[System.Windows.MessageBox]::Show("Error creating shadow copy: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+		Hide-Progress "Error creating shadow copies"
+		[System.Windows.MessageBox]::Show("Error creating shadow copies: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
 	}
 })
 
 $window.FindName("btnDeleteShadowCopy").Add_Click({
 	try {
 		$selectedCopy = $window.FindName("dgShadowCopies").SelectedItem
-		$volId = $script:selectedVolumeDeviceId
-		if (-not $volId) {
-			$sel = $window.FindName("dgVolumes").SelectedItem
-			if ($sel) { $volId = $sel.DeviceID }
-		}
-		if ($selectedCopy -and $volId) {
-			$result = [System.Windows.MessageBox]::Show("Are you sure you want to delete this shadow copy?`n`n$($selectedCopy.ShadowID)", "Confirm Deletion", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
+		if ($selectedCopy) {
+			# Use the shadow copy's own VolumeName (device path) for deletion
+			$volPath = $selectedCopy.VolumePath
+			$displayVolume = if ($selectedCopy.RequestedVolume) { $selectedCopy.RequestedVolume } else { $volPath }
+			$result = [System.Windows.MessageBox]::Show("Are you sure you want to delete this shadow copy?`n`nVolume: $displayVolume`nID: $($selectedCopy.ShadowID)", "Confirm Deletion", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
 			
 			if ($result -eq [System.Windows.MessageBoxResult]::Yes) {
 				Show-Progress "Deleting shadow copy..." $true
 				
-				Update-Progress 25 "Preparing for deletion..."
 				Update-Progress 50 "Deleting shadow copy..."
-				$deleted = Remove-VSSShadowCopy -VolumePath $volId -ShadowCopyID $selectedCopy.ShadowID -Confirm:$false -ErrorAction Stop
+				$deleted = Remove-VSSShadowCopy -VolumePath $volPath -ShadowCopyID $selectedCopy.ShadowID -Confirm:$false -ErrorAction Stop
 				
 				if (-not $deleted -or -not $deleted.Success) {
 					throw "Shadow copy deletion did not return a successful result."
@@ -605,7 +619,7 @@ $window.FindName("btnDeleteShadowCopy").Add_Click({
 			}
 		} else {
 			Hide-Progress "Please select a shadow copy to delete"
-			[System.Windows.MessageBox]::Show("Please select a shadow copy to delete and ensure a volume is selected", "Information", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+			[System.Windows.MessageBox]::Show("Please select a shadow copy to delete from the list", "Information", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
 		}
 	}
 	catch {
