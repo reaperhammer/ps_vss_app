@@ -480,6 +480,30 @@ $window.FindName("dgVolumes").Add_SelectionChanged({
 	}
 })
 
+# Toggle row selection directly when the CheckBox column cell (DisplayIndex 0) is clicked,
+# allowing multi-select without holding Ctrl, while preserving shift-select on other columns.
+$window.FindName("dgVolumes").Add_PreviewMouseLeftButtonDown({
+	param($sender, $args)
+	$dep = $args.OriginalSource -as [System.Windows.DependencyObject]
+	while ($null -ne $dep -and $dep -isnot [System.Windows.Controls.DataGridCell]) {
+		$dep = [System.Windows.Media.VisualTreeHelper]::GetParent($dep)
+	}
+	if ($null -ne $dep) {
+		$cell = $dep -as [System.Windows.Controls.DataGridCell]
+		if ($cell.Column.DisplayIndex -eq 0) {
+			$rowDep = $cell
+			while ($null -ne $rowDep -and $rowDep -isnot [System.Windows.Controls.DataGridRow]) {
+				$rowDep = [System.Windows.Media.VisualTreeHelper]::GetParent($rowDep)
+			}
+			if ($null -ne $rowDep) {
+				$row = $rowDep -as [System.Windows.Controls.DataGridRow]
+				$row.IsSelected = -not $row.IsSelected
+				$args.Handled = $true
+			}
+		}
+	}
+})
+
 # Event handlers for buttons
 $window.FindName("btnRefreshVolumes").Add_Click({
 	try {
