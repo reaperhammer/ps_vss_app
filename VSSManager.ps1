@@ -201,7 +201,10 @@ $xaml = @"
                             <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource ModernDataGridColumnHeaderStyle}"/>
                         </DataGrid.ColumnHeaderStyle>
                         <DataGrid.Columns>
-                            <DataGridTemplateColumn Header="" Width="50">
+                            <DataGridTemplateColumn Width="50">
+                                <DataGridTemplateColumn.Header>
+                                    <CheckBox Name="chkSelectAll" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </DataGridTemplateColumn.Header>
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                          <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -468,6 +471,20 @@ $script:selectedVolumes = @()
 $window.FindName("dgVolumes").Add_SelectionChanged({
 	param($sender, $args)
 	$items = @($sender.SelectedItems)
+	
+	# Update Select All checkbox state
+	$chkSelectAll = $window.FindName("chkSelectAll")
+	if ($null -ne $chkSelectAll) {
+		$total = $volumeList.Count
+		if ($items.Count -eq 0) {
+			$chkSelectAll.IsChecked = $false
+		} elseif ($items.Count -eq $total) {
+			$chkSelectAll.IsChecked = $true
+		} else {
+			$chkSelectAll.IsChecked = $null # Indeterminate (dash)
+		}
+	}
+	
 	if ($items.Count -gt 0) {
 		$script:selectedVolumes = $items
 		$driveNames = ($items | ForEach-Object { $_.DriveLetter + " (" + $_.VolumeName + ")" }) -join ", "
@@ -479,6 +496,19 @@ $window.FindName("dgVolumes").Add_SelectionChanged({
 		$window.FindName("txtStatus").Text = "Ready"
 	}
 })
+
+# Select All click handler
+$chkSelectAll = $window.FindName("chkSelectAll")
+if ($null -ne $chkSelectAll) {
+	$chkSelectAll.Add_Click({
+		$dg = $window.FindName("dgVolumes")
+		if ($chkSelectAll.IsChecked -eq $true) {
+			$dg.SelectAll()
+		} else {
+			$dg.UnselectAll()
+		}
+	})
+}
 
 # Toggle row selection directly when the CheckBox column cell (DisplayIndex 0) is clicked,
 # allowing multi-select without holding Ctrl, while preserving shift-select on other columns.
