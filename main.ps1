@@ -39,7 +39,11 @@ function ConvertTo-VSSCanonicalVolumeName {
         return $null
     }
 
-    return (($Path.Trim() -replace '\\+$', '').ToUpperInvariant())
+    $normalized = $Path.Trim() -replace '\\+', '\'
+    if ($normalized.StartsWith('\')) {
+        $normalized = '\' + $normalized
+    }
+    return (($normalized -replace '\\+$', '').ToUpperInvariant())
 }
 
 function Get-VSSUsageColor {
@@ -598,8 +602,8 @@ function Set-VSSShadowStorageLimit {
 
         $storage = Get-WmiObject -Class Win32_ShadowStorage | Where-Object {
             $volId = $null
-            if ($_.Volume -match 'DeviceID="(?<id>[^"]+)"') { $volId = $Matches.id.ToUpperInvariant() }
-            $volId -eq $canonicalVol
+            if ($_.Volume -match 'DeviceID="(?<id>[^"]+)"') { $volId = $Matches.id }
+            (ConvertTo-VSSCanonicalVolumeName -Path $volId) -eq $canonicalVol
         }
 
         $success = $false
@@ -610,13 +614,19 @@ function Set-VSSShadowStorageLimit {
             $success = ($null -ne $result)
         } else {
             # Create new association
-            $volRef = "Win32_Volume.DeviceID=""$($resolvedVol.DeviceID)"""
-            $diffRef = "Win32_Volume.DeviceID=""$($resolvedDiff.DeviceID)"""
+            # WMI object path references require backslashes to be doubled (escaped)
+            $escapedVol = $resolvedVol.DeviceID.Replace('\', '\\')
+            $escapedDiff = $resolvedDiff.DeviceID.Replace('\', '\\')
+            $volRef = "Win32_Volume.DeviceID=""$escapedVol"""
+            $diffRef = "Win32_Volume.DeviceID=""$escapedDiff"""
             
             try {
                 $class = [wmiclass]"root\cimv2:Win32_ShadowStorage"
                 $result = $class.Create($volRef, $diffRef, $limit)
                 $returnValue = if ($result -and $result.PSObject.Properties["ReturnValue"]) { [int]$result.ReturnValue } else { [int]$result }
+                if ($returnValue -eq 10) {
+                    throw "WMI returned 10 (Unknown error)"
+                }
                 $success = ($returnValue -eq 0)
             } catch {
                 # Fallback to vssadmin if WMI fails or complains about method signatures
@@ -626,7 +636,11 @@ function Set-VSSShadowStorageLimit {
                 $cmdResult = cmd.exe /c vssadmin add shadowstorage /For=$volLetter /On=$diffVolLetter /Max=$limitStr 2>&1
                 $success = ($LASTEXITCODE -eq 0)
                 if (-not $success) {
-                     throw "Failed to create shadow storage via WMI and vssadmin add: $cmdResult"
+                    if ($cmdResult -match "Invalid command") {
+                         throw "Shadow storage cannot be created manually on Windows Client editions. Windows automatically creates the storage association when the first shadow copy is taken on the volume. Please create a shadow copy on this volume first, then you will be able to change its storage limit."
+                    } else {
+                         throw "Failed to create shadow storage via WMI and vssadmin add: $cmdResult"
+                    }
                 }
             }
         }
