@@ -173,6 +173,7 @@ $xaml = @"
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     
                     <!-- Volume Management Toolbar -->
@@ -238,6 +239,48 @@ $xaml = @"
                             <DataGridTextColumn Header="Used Space (GB)" Binding="{Binding UsedSpaceGB}" Width="120"/>
                         </DataGrid.Columns>
                     </DataGrid>
+                    
+                    <!-- Shadow Storage Management Panel -->
+                    <Border Grid.Row="2" Background="{StaticResource SurfaceBrush}" 
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                            CornerRadius="4" Padding="16" Margin="0,16,0,0"
+                            Name="panelShadowStorage" Visibility="Collapsed">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            
+                            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
+                                <Image Source=".\assets\png\properties.png" Width="16" Height="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                <TextBlock Name="lblStorageTitle" Text="Shadow Storage Limit (Volume C:)" FontWeight="Bold" FontSize="12" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            
+                            <Grid Grid.Row="1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                
+                                <TextBlock Grid.Column="0" Text="Max Space Limit:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <TextBox Grid.Column="1" Name="txtMaxSpace" Height="28" VerticalAlignment="Center" Width="100" HorizontalAlignment="Left" Margin="0,0,8,0"/>
+                                <ComboBox Grid.Column="2" Name="cmbMaxSpaceUnit" Height="28" Width="60" SelectedIndex="0" VerticalAlignment="Center" Margin="0,0,8,0">
+                                    <ComboBoxItem Content="GB"/>
+                                    <ComboBoxItem Content="MB"/>
+                                    <ComboBoxItem Content="%"/>
+                                </ComboBox>
+                                <CheckBox Grid.Column="3" Name="chkUnlimited" Content="Unlimited" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                                
+                                <Button Grid.Column="4" Name="btnSaveStorage" Style="{StaticResource ModernButtonStyle}" Width="100" Height="28" HorizontalAlignment="Left">
+                                    <TextBlock Text="Save Limit" VerticalAlignment="Center"/>
+                                </Button>
+                            </Grid>
+                        </Grid>
+                    </Border>
                 </Grid>
             </TabItem>
             
@@ -253,6 +296,7 @@ $xaml = @"
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     
                     <!-- Shadow Copy Management Toolbar -->
@@ -275,6 +319,11 @@ $xaml = @"
                                         <TextBlock Text="Create Shadow Copy" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
+                                <TextBlock Text="Context:" VerticalAlignment="Center" Margin="8,0,4,0" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                <ComboBox Name="cmbContext" Width="140" Height="36" SelectedIndex="0" VerticalAlignment="Center" Margin="0,0,16,0">
+                                    <ComboBoxItem Content="ClientAccessible"/>
+                                    <ComboBoxItem Content="Backup"/>
+                                </ComboBox>
                                 <Button Name="btnDeleteShadowCopy" Style="{StaticResource ModernButtonStyle}"
                                         Width="140" Height="36">
                                     <StackPanel Orientation="Horizontal">
@@ -318,6 +367,112 @@ $xaml = @"
                             <DataGridTextColumn Header="No Writers" Binding="{Binding NoWriters}" Width="90"/>
                             <DataGridTextColumn Header="Size (MB)" Binding="{Binding SizeMB}" Width="100"/>
                             <DataGridTextColumn Header="Age" Binding="{Binding Age}" Width="80"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    
+                    <!-- Mount Control Panel -->
+                    <Border Grid.Row="2" Background="{StaticResource SurfaceBrush}" 
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                            CornerRadius="4" Padding="16" Margin="0,16,0,0"
+                            Name="panelMount" Visibility="Collapsed">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            
+                            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
+                                <Image Source=".\assets\png\explorer.png" Width="16" Height="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                <TextBlock Name="lblMountTitle" Text="Mount Shadow Copy" FontWeight="Bold" FontSize="12" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            
+                            <Grid Grid.Row="1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="250"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                
+                                <TextBlock Grid.Column="0" Text="Mount Folder:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <TextBox Grid.Column="1" Name="txtMountPath" Text="C:\ps_vss_app\mountpoint" Height="28" Width="220" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <Button Grid.Column="2" Name="btnMount" Style="{StaticResource ModernButtonStyle}" Width="80" Height="28" Margin="0,0,8,0">
+                                    <TextBlock Text="Mount" VerticalAlignment="Center"/>
+                                </Button>
+                                <Button Grid.Column="3" Name="btnBrowseMount" Style="{StaticResource ModernButtonStyle}" Width="80" Height="28" Margin="0,0,8,0" IsEnabled="False">
+                                    <TextBlock Text="Browse" VerticalAlignment="Center"/>
+                                </Button>
+                                <Button Grid.Column="4" Name="btnDismount" Style="{StaticResource ModernButtonStyle}" Width="80" Height="28" Margin="0,0,8,0" IsEnabled="False">
+                                    <TextBlock Text="Dismount" VerticalAlignment="Center"/>
+                                </Button>
+                            </Grid>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </TabItem>
+            
+            <!-- VSS Writers Tab -->
+            <TabItem Style="{StaticResource ModernTabItemStyle}">
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <Image Source=".\assets\png\properties.png" Width="16" Height="16" Margin="0,0,8,0"/>
+                        <TextBlock Text="VSS Writers" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </TabItem.Header>
+                <Grid Margin="20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    
+                    <!-- VSS Writers Toolbar -->
+                    <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" 
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                            CornerRadius="4" Padding="16" Margin="0,0,0,16">
+                        <StackPanel Orientation="Horizontal">
+                            <Button Name="btnRefreshWriters" Style="{StaticResource ModernButtonStyle}"
+                                    Width="140" Height="36">
+                                <StackPanel Orientation="Horizontal">
+                                    <Image Source=".\assets\png\refresh.png" Width="16" Height="16" Margin="0,0,8,0"/>
+                                    <TextBlock Text="Refresh Writers" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <TextBlock Name="txtWritersStatus" Text="Ready" 
+                                      VerticalAlignment="Center" 
+                                      Foreground="{StaticResource TextSecondaryBrush}"
+                                      Margin="16,0,0,0"/>
+                        </StackPanel>
+                    </Border>
+                    
+                    <!-- VSS Writers DataGrid -->
+                    <DataGrid Name="dgWriters" Grid.Row="1" 
+                               Style="{StaticResource ModernDataGridStyle}">
+                        <DataGrid.ColumnHeaderStyle>
+                            <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource ModernDataGridColumnHeaderStyle}"/>
+                        </DataGrid.ColumnHeaderStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Writer Name" Binding="{Binding WriterName}" Width="250"/>
+                            <DataGridTextColumn Header="State" Binding="{Binding State}" Width="150"/>
+                            <DataGridTemplateColumn Header="Status" Width="100">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{Binding StatusColor}" 
+                                                CornerRadius="12" 
+                                                Padding="8,2" 
+                                                HorizontalAlignment="Center">
+                                            <TextBlock Text="{Binding State}" 
+                                                      Foreground="White" 
+                                                      FontSize="10" 
+                                                      FontWeight="SemiBold"
+                                                      HorizontalAlignment="Center"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Last Error" Binding="{Binding LastError}" Width="150"/>
+                            <DataGridTextColumn Header="Writer ID" Binding="{Binding WriterId}" Width="250"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </Grid>
@@ -495,6 +650,43 @@ $window.FindName("dgVolumes").Add_SelectionChanged({
 		$window.FindName("txtSelectedVolume").Text = "No volumes selected"
 		$window.FindName("txtStatus").Text = "Ready"
 	}
+
+	# Shadow Storage single-select panel configuration
+	$panelStorage = $window.FindName("panelShadowStorage")
+	if ($items.Count -eq 1 -and $panelStorage) {
+		$vol = $items[0]
+		$panelStorage.Visibility = [System.Windows.Visibility]::Visible
+		$window.FindName("lblStorageTitle").Text = "Shadow Storage Limit (Volume $($vol.DriveLetter))"
+		
+		# Query shadow storage
+		$storage = @(Get-VSSShadowStorage -VolumePath $vol.DeviceID)
+		if ($storage.Count -gt 0) {
+			$st = $storage[0]
+			$script:currentStorage = $st
+			if ($st.MaxSpaceGB -eq "UNLIMITED") {
+				$window.FindName("chkUnlimited").IsChecked = $true
+				$window.FindName("txtMaxSpace").Text = ""
+				$window.FindName("txtMaxSpace").IsEnabled = $false
+				$window.FindName("cmbMaxSpaceUnit").IsEnabled = $false
+			} else {
+				$window.FindName("chkUnlimited").IsChecked = $false
+				$window.FindName("txtMaxSpace").Text = $st.MaxSpaceGB
+				$window.FindName("txtMaxSpace").IsEnabled = $true
+				$window.FindName("cmbMaxSpaceUnit").IsEnabled = $true
+				$window.FindName("cmbMaxSpaceUnit").SelectedIndex = 0 # GB
+			}
+		} else {
+			# No association exists
+			$script:currentStorage = $null
+			$window.FindName("chkUnlimited").IsChecked = $true
+			$window.FindName("txtMaxSpace").Text = ""
+			$window.FindName("txtMaxSpace").IsEnabled = $false
+			$window.FindName("cmbMaxSpaceUnit").IsEnabled = $false
+		}
+	} elseif ($panelStorage) {
+		$panelStorage.Visibility = [System.Windows.Visibility]::Collapsed
+		$script:currentStorage = $null
+	}
 })
 
 # Select All click handler
@@ -613,8 +805,12 @@ $window.FindName("btnCreateShadowCopy").Add_Click({
 			if ($sel) { $volumes = @($sel) }
 		}
 		if ($volumes.Count -gt 0) {
+			# Read selected context
+			$contextItem = $window.FindName("cmbContext").SelectedItem
+			$context = if ($contextItem) { $contextItem.Content } else { "ClientAccessible" }
+			
 			$driveNames = ($volumes | ForEach-Object { $_.DriveLetter }) -join ", "
-			Show-Progress "Creating shadow copies for $($volumes.Count) volume(s)..." $true
+			Show-Progress "Creating shadow copies for $($volumes.Count) volume(s) with context $context..." $true
 			
 			$totalVolumes = $volumes.Count
 			$currentVolumeIdx = 0
@@ -625,7 +821,7 @@ $window.FindName("btnCreateShadowCopy").Add_Click({
 				$currentVolumeIdx++
 				Update-Progress ([math]::Round(($currentVolumeIdx / $totalVolumes) * 100)) "Creating shadow copy for $($vol.DriveLetter) ($currentVolumeIdx of $totalVolumes)..."
 				try {
-					$created = New-VSSShadowCopy -VolumePath $vol.DeviceID -Confirm:$false -ErrorAction Stop
+					$created = New-VSSShadowCopy -VolumePath $vol.DeviceID -Context $context -Confirm:$false -ErrorAction Stop
 					if ($created -and $created.Success) {
 						$successCount++
 					} else {
@@ -712,6 +908,181 @@ $window.FindName("btnDeleteShadowCopy").Add_Click({
 		Hide-Progress "Error deleting shadow copies"
 		[System.Windows.MessageBox]::Show("Error deleting shadow copies: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
 	}
+})
+
+# Define writers list data binding
+$vssWriterList = New-Object System.Collections.ObjectModel.ObservableCollection[object]
+$window.FindName("dgWriters").ItemsSource = $vssWriterList
+
+# Feature 1: chkUnlimited click handler and btnSaveStorage click handler
+$window.FindName("chkUnlimited").Add_Click({
+	$chk = $sender
+	$txt = $window.FindName("txtMaxSpace")
+	$cmb = $window.FindName("cmbMaxSpaceUnit")
+	if ($chk.IsChecked -eq $true) {
+		$txt.Text = ""
+		$txt.IsEnabled = $false
+		$cmb.IsEnabled = $false
+	} else {
+		$txt.IsEnabled = $true
+		$cmb.IsEnabled = $true
+	}
+})
+
+$window.FindName("btnSaveStorage").Add_Click({
+	try {
+		$items = @($window.FindName("dgVolumes").SelectedItems)
+		if ($items.Count -eq 1) {
+			$vol = $items[0]
+			$unlimited = $window.FindName("chkUnlimited").IsChecked
+			$maxSpaceBytes = -1
+			
+			if ($unlimited -eq $false) {
+				$valStr = $window.FindName("txtMaxSpace").Text.Trim()
+				if (-not ($valStr -as [double])) {
+					throw "Please enter a valid numeric value for Max Space Limit."
+				}
+				$val = [double]$valStr
+				$unit = $window.FindName("cmbMaxSpaceUnit").Text
+				
+				if ($unit -eq "GB") {
+					$maxSpaceBytes = [int64]($val * 1GB)
+				} elseif ($unit -eq "MB") {
+					$maxSpaceBytes = [int64]($val * 1MB)
+				} elseif ($unit -eq "%") {
+					if ($val -le 0 -or $val -gt 100) {
+						throw "Percentage must be between 1 and 100."
+					}
+					$maxSpaceBytes = [int64]($vol.CapacityBytes * ($val / 100))
+				}
+			}
+			
+			Show-Progress "Configuring shadow storage..." $true
+			$res = Set-VSSShadowStorageLimit -VolumePath $vol.DeviceID -MaxSpaceBytes $maxSpaceBytes -ErrorAction Stop
+			if ($res -and $res.Success) {
+				Hide-Progress "Shadow storage limit updated successfully"
+				# Refresh volume list to update details
+				$window.FindName("btnRefreshVolumes").RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
+			} else {
+				throw "Failed to update shadow storage limit."
+			}
+		}
+	} catch {
+		Hide-Progress "Error configuring shadow storage"
+		[System.Windows.MessageBox]::Show("Error configuring shadow storage: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+	}
+})
+
+# Feature 2: VSS Writers refresh click handler
+$window.FindName("btnRefreshWriters").Add_Click({
+	try {
+		Show-Progress "Refreshing VSS Writers..." $true
+		$vssWriterList.Clear()
+		
+		$writers = @(Get-VSSWriters -ErrorAction Stop)
+		$totalWriters = $writers.Count
+		$currentWriter = 0
+		
+		foreach ($w in $writers) {
+			$currentWriter++
+			$progressPercent = if ($totalWriters -gt 0) { [math]::Round(($currentWriter / $totalWriters) * 100) } else { 100 }
+			Update-Progress $progressPercent "Processing writer $currentWriter of $totalWriters"
+			$vssWriterList.Add($w)
+		}
+		
+		Hide-Progress "VSS Writers refreshed successfully - Found $totalWriters writers"
+		$window.FindName("txtWritersStatus").Text = "Writers: $totalWriters (Stable: $((@($writers | Where-Object { $_.StateCode -eq 1 })).Count))"
+	} catch {
+		Hide-Progress "Error refreshing VSS Writers"
+		[System.Windows.MessageBox]::Show("Error refreshing VSS Writers: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+	}
+})
+
+# Feature 3: Keep track of selected shadow copy for mounting
+$window.FindName("dgShadowCopies").Add_SelectionChanged({
+	param($sender, $args)
+	$sel = $sender.SelectedItem
+	$panel = $window.FindName("panelMount")
+	if ($sel -and $panel) {
+		$panel.Visibility = [System.Windows.Visibility]::Visible
+		$window.FindName("lblMountTitle").Text = "Mount Shadow Copy ($($sel.ShadowID))"
+		
+		# Check if mount point symlink exists and points to this device object
+		$mountPath = $window.FindName("txtMountPath").Text
+		$isMounted = $false
+		$item = Get-Item -Path $mountPath -ErrorAction SilentlyContinue
+		if ($item -and $item.LinkType -eq "SymbolicLink") {
+			$isMounted = $true
+		}
+		
+		$window.FindName("btnMount").IsEnabled = -not $isMounted
+		$window.FindName("btnBrowseMount").IsEnabled = $isMounted
+		$window.FindName("btnDismount").IsEnabled = $isMounted
+	} elseif ($panel) {
+		$panel.Visibility = [System.Windows.Visibility]::Collapsed
+	}
+})
+
+# Feature 3: btnMount, btnBrowseMount, btnDismount click handlers
+$window.FindName("btnMount").Add_Click({
+	try {
+		$sel = $window.FindName("dgShadowCopies").SelectedItem
+		if ($sel) {
+			$mountPath = $window.FindName("txtMountPath").Text
+			Show-Progress "Mounting shadow copy..." $true
+			
+			$res = Mount-VSSShadowCopy -ShadowCopyID $sel.ShadowID -MountPath $mountPath -ErrorAction Stop
+			if ($res -and $res.Success) {
+				Hide-Progress "Shadow copy mounted successfully at $mountPath"
+				$window.FindName("btnMount").IsEnabled = $false
+				$window.FindName("btnBrowseMount").IsEnabled = $true
+				$window.FindName("btnDismount").IsEnabled = $true
+			} else {
+				throw "Failed to mount shadow copy."
+			}
+		}
+	} catch {
+		Hide-Progress "Error mounting shadow copy"
+		[System.Windows.MessageBox]::Show("Error mounting shadow copy: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+	}
+})
+
+$window.FindName("btnBrowseMount").Add_Click({
+	try {
+		$mountPath = $window.FindName("txtMountPath").Text
+		if (Test-Path -Path $mountPath) {
+			[System.Diagnostics.Process]::Start("explorer.exe", $mountPath)
+		} else {
+			[System.Windows.MessageBox]::Show("Mount directory does not exist or is not mounted.", "Information", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+		}
+	} catch {
+		[System.Windows.MessageBox]::Show("Error opening folder: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+	}
+})
+
+$window.FindName("btnDismount").Add_Click({
+	try {
+		$mountPath = $window.FindName("txtMountPath").Text
+		Show-Progress "Dismounting shadow copy..." $true
+		$res = Dismount-VSSShadowCopy -MountPath $mountPath -ErrorAction Stop
+		if ($res -and $res.Success) {
+			Hide-Progress "Shadow copy dismounted successfully"
+			$window.FindName("btnMount").IsEnabled = $true
+			$window.FindName("btnBrowseMount").IsEnabled = $false
+			$window.FindName("btnDismount").IsEnabled = $false
+		} else {
+			throw "Failed to dismount shadow copy."
+		}
+	} catch {
+		Hide-Progress "Error dismounting shadow copy"
+		[System.Windows.MessageBox]::Show("Error dismounting shadow copy: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+	}
+})
+
+# Auto-refresh volumes and writers at startup (using dispatcher to run after UI is fully rendered)
+$window.Dispatcher.BeginInvoke([Action]{
+	$window.FindName("btnRefreshVolumes").RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
+	$window.FindName("btnRefreshWriters").RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
 })
 
 # Show the window

@@ -495,6 +495,321 @@ function Remove-VSSShadowCopy {
     }
 }
 
+function Get-VSSShadowStorage {
+    <#
+    .SYNOPSIS
+        Queries shadow storage associations (diff area limits) for volumes.
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [string]$VolumePath
+    )
+
+    try {
+        if (-not (Test-VSSAdministrator)) {
+            throw "Administrator privileges are required to query VSS shadow storage."
+        }
+
+        # Get list of all supported volumes for mapping reference ID -> Drive Letter
+        $allvols = @(Get-VSSSupportedVolumes)
+        
+        $canonicalDeviceId = $null
+        if ($VolumePath) {
+            $resolvedVolume = Resolve-VSSVolumePath -VolumePath $VolumePath -ErrorAction Stop
+            $canonicalDeviceId = $resolvedVolume.CanonicalDevice
+        }
+
+        $storages = @(Get-WmiObject -Class Win32_ShadowStorage -ErrorAction Stop)
+
+        foreach ($storage in $storages) {
+            # Extract DeviceID from Volume and DiffVolume reference paths
+            $volId = $null
+            $diffVolId = $null
+            if ($storage.Volume -match 'DeviceID="(?<id>[^"]+)"') {
+                $volId = $Matches.id -replace '\\+$', ''
+            }
+            if ($storage.DiffVolume -match 'DeviceID="(?<id>[^"]+)"') {
+                $diffVolId = $Matches.id -replace '\\+$', ''
+            }
+
+            $canonicalVolId = if ($volId) { $volId.ToUpperInvariant() } else { $null }
+            
+            # Filter if a specific VolumePath was requested
+            if ($canonicalDeviceId -and $canonicalVolId -ne $canonicalDeviceId) {
+                continue
+            }
+
+            # Map to drive letters
+            $volInfo = $allvols | Where-Object { (ConvertTo-VSSCanonicalVolumeName -Path $_.DeviceID) -eq $canonicalVolId }
+            $diffVolInfo = $allvols | Where-Object { (ConvertTo-VSSCanonicalVolumeName -Path $_.DeviceID) -eq ($diffVolId.ToUpperInvariant()) }
+
+            $volLetter = if ($volInfo) { $volInfo.DriveLetter } else { $volId }
+            $diffVolLetter = if ($diffVolInfo) { $diffVolInfo.DriveLetter } else { $diffVolId }
+
+            [PSCustomObject]@{
+                PSTypeName       = "VSS.ShadowStorage"
+                Volume           = $volId
+                DiffVolume       = $diffVolId
+                VolumeLetter     = $volLetter
+                DiffVolumeLetter = $diffVolLetter
+                MaxSpace         = $storage.MaxSpace
+                AllocatedSpace   = $storage.AllocatedSpace
+                UsedSpace        = $storage.UsedSpace
+                MaxSpaceGB       = if ($storage.MaxSpace -eq [UInt64]::MaxValue -or $storage.MaxSpace -eq 0 -or $storage.MaxSpace -eq [Int64]::MaxValue -or $storage.MaxSpace -eq 9223372036854775807) { "UNLIMITED" } else { [math]::Round($storage.MaxSpace / 1GB, 2) }
+                AllocatedSpaceGB = [math]::Round($storage.AllocatedSpace / 1GB, 2)
+                UsedSpaceGB      = [math]::Round($storage.UsedSpace / 1GB, 2)
+                StorageObject    = $storage
+            }
+        }
+    }
+    catch {
+        Write-Error "Failed to retrieve shadow storage: $($_.Exception.Message)"
+    }
+}
+
+function Set-VSSShadowStorageLimit {
+    <#
+    .SYNOPSIS
+        Sets the shadow storage limit (MaxSpace) for a volume. Creates association if none exists.
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VolumePath,
+
+        [string]$DiffVolumePath,
+
+        [Parameter(Mandatory = $true)]
+        [int64]$MaxSpaceBytes
+    )
+
+    try {
+        if (-not (Test-VSSAdministrator)) {
+            throw "Administrator privileges are required to configure VSS shadow storage."
+        }
+
+        $resolvedVol = Resolve-VSSVolumePath -VolumePath $VolumePath -ErrorAction Stop
+        $resolvedDiff = if ($DiffVolumePath) { Resolve-VSSVolumePath -VolumePath $DiffVolumePath -ErrorAction Stop } else { $resolvedVol }
+        
+        $canonicalVol = $resolvedVol.CanonicalDevice
+        $limit = if ($MaxSpaceBytes -lt 0) { [UInt64]::MaxValue } else { [UInt64]$MaxSpaceBytes }
+
+        $storage = Get-WmiObject -Class Win32_ShadowStorage | Where-Object {
+            $volId = $null
+            if ($_.Volume -match 'DeviceID="(?<id>[^"]+)"') { $volId = $Matches.id.ToUpperInvariant() }
+            $volId -eq $canonicalVol
+        }
+
+        $success = $false
+        if ($storage) {
+            # Modify existing MaxSpace
+            $storage.MaxSpace = $limit
+            $result = $storage.Put()
+            $success = ($null -ne $result)
+        } else {
+            # Create new association
+            $volRef = "Win32_Volume.DeviceID=""$($resolvedVol.DeviceID)"""
+            $diffRef = "Win32_Volume.DeviceID=""$($resolvedDiff.DeviceID)"""
+            
+            try {
+                $class = [wmiclass]"root\cimv2:Win32_ShadowStorage"
+                $result = $class.Create($volRef, $diffRef, $limit)
+                $returnValue = if ($result -and $result.PSObject.Properties["ReturnValue"]) { [int]$result.ReturnValue } else { [int]$result }
+                $success = ($returnValue -eq 0)
+            } catch {
+                # Fallback to vssadmin if WMI fails or complains about method signatures
+                $volLetter = $resolvedVol.DriveLetter
+                $diffVolLetter = $resolvedDiff.DriveLetter
+                $limitStr = if ($MaxSpaceBytes -lt 0) { "UNLIMITED" } else { "$($MaxSpaceBytes)" }
+                $cmdResult = cmd.exe /c vssadmin add shadowstorage /For=$volLetter /On=$diffVolLetter /Max=$limitStr 2>&1
+                $success = ($LASTEXITCODE -eq 0)
+                if (-not $success) {
+                     throw "Failed to create shadow storage via WMI and vssadmin add: $cmdResult"
+                }
+            }
+        }
+
+        [PSCustomObject]@{
+            Success    = $success
+            VolumePath = $VolumePath
+            MaxSpace   = $limit
+        }
+    }
+    catch {
+        Write-Error "Failed to configure shadow storage for volume '$VolumePath': $($_.Exception.Message)"
+    }
+}
+
+function Get-VSSWriters {
+    <#
+    .SYNOPSIS
+        Queries the current list of VSS Writers and their states.
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param()
+
+    try {
+        $vssadminPath = Join-Path $env:SystemRoot "System32\vssadmin.exe"
+        if (-not (Test-Path $vssadminPath)) {
+            throw "vssadmin.exe not found on this system. Unable to query VSS Writers."
+        }
+
+        # Run vssadmin list writers and grab output
+        $output = & vssadmin list writers 2>&1
+        $list = @()
+        $current = $null
+
+        foreach ($line in $output) {
+            $trimmed = $line.Trim()
+            if ($trimmed -match "Writer name:\s*'(?<Name>[^']+)'") {
+                if ($null -ne $current) {
+                    $list += [PSCustomObject]$current
+                }
+                $current = @{
+                    PSTypeName = "VSS.Writer"
+                    WriterName = $Matches.Name
+                    WriterId   = "Unknown"
+                    State      = "Unknown"
+                    StateCode  = 0
+                    LastError  = "Unknown"
+                    StatusColor = "#F44336" # Default red
+                }
+            }
+            elseif ($trimmed -match "Writer Id:\s*{(?<Id>[^}]+)}") {
+                $current.WriterId = $Matches.Id
+            }
+            elseif ($trimmed -match "State:\s*\[(?<Code>\d+)\]\s*(?<StateText>.*)") {
+                $current.StateCode = [int]$Matches.Code
+                $current.State = $Matches.StateText.Trim()
+                # Status coloring
+                if ($current.StateCode -eq 1) {
+                    $current.StatusColor = "#4CAF50" # Stable: green
+                } else {
+                    $current.StatusColor = "#FF9800" # Changing/Freeze: orange
+                }
+            }
+            elseif ($trimmed -match "Last error:\s*(?<Error>.*)") {
+                $current.LastError = $Matches.Error.Trim()
+                if ($current.LastError -ne "No error") {
+                    $current.StatusColor = "#F44336" # Red if there's a last error
+                }
+            }
+        }
+
+        if ($null -ne $current) {
+            $list += [PSCustomObject]$current
+        }
+
+        $list
+    }
+    catch {
+        Write-Error "Failed to retrieve VSS Writers: $($_.Exception.Message)"
+    }
+}
+
+function Mount-VSSShadowCopy {
+    <#
+    .SYNOPSIS
+        Mounts a VSS shadow copy as a folder symlink.
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ShadowCopyID,
+
+        [Parameter(Mandatory = $true)]
+        [string]$MountPath
+    )
+
+    try {
+        if (-not (Test-VSSAdministrator)) {
+            throw "Administrator privileges are required to mount VSS shadow copies."
+        }
+
+        $shadow = Get-WmiObject -Class Win32_ShadowCopy | Where-Object { $_.ID -eq $ShadowCopyID }
+        if (-not $shadow) {
+            throw "Shadow copy with ID '$ShadowCopyID' not found."
+        }
+
+        $deviceObject = $shadow.DeviceObject
+        if (-not $deviceObject) {
+            throw "Shadow copy does not expose a valid DeviceObject path."
+        }
+
+        $target = $deviceObject + "\"
+
+        # Create parent directory if needed
+        $parent = Split-Path -Path $MountPath -Parent
+        if ($parent -and -not (Test-Path -Path $parent)) {
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
+        }
+
+        # Clear existing link or folder
+        if (Test-Path -Path $MountPath) {
+            cmd.exe /c rmdir "$MountPath" 2>&1 | Out-Null
+            Remove-Item -Path $MountPath -Force -Recurse -ErrorAction SilentlyContinue | Out-Null
+        }
+
+        # Use cmd mklink /d since PowerShell's New-Item validates target paths, which fails for raw VSS devices
+        $cmdResult = cmd.exe /c mklink /d "$MountPath" "$target" 2>&1
+        $success = ($LASTEXITCODE -eq 0)
+
+        if (-not $success) {
+            throw "mklink failed: $cmdResult"
+        }
+
+        [PSCustomObject]@{
+            Success   = $true
+            MountPath = $MountPath
+            Target    = $target
+            ShadowID  = $ShadowCopyID
+        }
+    }
+    catch {
+        Write-Error "Failed to mount shadow copy: $($_.Exception.Message)"
+    }
+}
+
+function Dismount-VSSShadowCopy {
+    <#
+    .SYNOPSIS
+        Safely dismounts a VSS shadow copy folder symlink.
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$MountPath
+    )
+
+    try {
+        $success = $false
+        if (Test-Path -Path $MountPath) {
+            # rmdir is safe for junctions/symlinks and doesn't delete target files
+            $result = cmd.exe /c rmdir "$MountPath" 2>&1
+            $success = ($LASTEXITCODE -eq 0)
+            if (-not $success) {
+                throw "rmdir failed: $result"
+            }
+        } else {
+            $success = $true
+        }
+
+        [PSCustomObject]@{
+            Success   = $success
+            MountPath = $MountPath
+        }
+    }
+    catch {
+        Write-Error "Failed to dismount shadow copy at '$MountPath': $($_.Exception.Message)"
+    }
+}
+
+
 # Example usage:
 # Get-VSSSupportedVolumes
 # Get-VSSShadowCopies -VolumePath "E:\"
