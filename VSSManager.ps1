@@ -29,6 +29,18 @@ Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName WindowsBase
 
+# VSS create/delete operations require elevation. Fail early with a clear GUI message
+# instead of letting WMI calls fail later with vague access denied errors.
+if (-not (Test-VSSAdministrator)) {
+	[System.Windows.MessageBox]::Show(
+		"VSS Manager must be run as Administrator to manage volume shadow copies.`n`nUse Launch.bat or restart PowerShell as Administrator.",
+		"Administrator Required",
+		[System.Windows.MessageBoxButton]::OK,
+		[System.Windows.MessageBoxImage]::Warning
+	) | Out-Null
+	exit 1
+}
+
 # Ensure STA thread for WPF (under Windows PowerShell 5.1)
 if ([Threading.Thread]::CurrentThread.ApartmentState -ne [Threading.ApartmentState]::STA) {
 	Write-Host "Restarting in STA mode..."
@@ -192,8 +204,9 @@ $xaml = @"
                             <DataGridTemplateColumn Header="" Width="50">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                  IsChecked="{Binding RelativeSource={RelativeSource AncestorType=DataGridRow}, Path=IsSelected, Mode=TwoWay}"/>
+                                         <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                   IsHitTestVisible="False" Focusable="False"
+                                                   IsChecked="{Binding RelativeSource={RelativeSource AncestorType=DataGridRow}, Path=IsSelected, Mode=OneWay}"/>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
@@ -281,7 +294,7 @@ $xaml = @"
                         </DataGrid.ColumnHeaderStyle>
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Shadow ID" Binding="{Binding ShadowID}" Width="250"/>
-                            <DataGridTextColumn Header="Creation Time" Binding="{Binding CreationTime}" Width="160"/>
+                            <DataGridTextColumn Header="Creation Time" Binding="{Binding CreationTimeText}" Width="160"/>
                             <DataGridTemplateColumn Header="State" Width="100">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
@@ -375,19 +388,30 @@ function Load-Xaml {
 		New-Item -ItemType Directory -Path $assetsPath -Force | Out-Null
 	}
 	
-	# Check if PNG files exist
+	# Check if PNG files exist and prepare safe XAML asset references.
+	# Missing Image sources are non-fatal, but a missing Window.Icon causes XamlReader.Parse() to fail.
 	$requiredFiles = @("refresh.png", "create.png", "delete.png", "volume.png", "shadowcopy.png", "app_icon.png")
+	$xamlWithPaths = $xaml
 	foreach ($file in $requiredFiles) {
 		$filePath = Join-Path $assetsPath $file
-		if (-not (Test-Path $filePath)) {
-			Write-Warning "Required PNG file not found: $filePath"
-		} else {
+		$relativeAssetPath = ".\assets\png\$file"
+		$relativeAssetPattern = [regex]::Escape($relativeAssetPath)
+		
+		if (Test-Path $filePath) {
 			Write-Host "Found PNG file: $filePath"
+			$resolvedPath = $filePath
+			$xamlWithPaths = [regex]::Replace($xamlWithPaths, $relativeAssetPattern, { param($match) $resolvedPath })
+		}
+		else {
+			Write-Warning "Required PNG file not found: $filePath"
+			if ($file -eq "app_icon.png") {
+				$xamlWithPaths = $xamlWithPaths -replace '\s+Icon="\.\\assets\\png\\app_icon\.png"', ''
+			}
+			else {
+				$xamlWithPaths = [regex]::Replace($xamlWithPaths, $relativeAssetPattern, { param($match) "" })
+			}
 		}
 	}
-	
-	# Replace relative paths with absolute paths in XAML
-	$xamlWithPaths = $xaml -replace '\.\\assets\\png\\', "$assetsPath\"
 	
 	$window = [Windows.Markup.XamlReader]::Parse($xamlWithPaths)
 	return $window
@@ -462,8 +486,7 @@ $window.FindName("btnRefreshVolumes").Add_Click({
 	try {
 		Show-Progress "Refreshing volumes..." $true
 		
-		# Call your existing function to get volumes
-		$volumes = Get-WmiObject -Class Win32_Volume | Where-Object { $_.DriveType -eq 3 -and $_.DriveLetter -ne $null }
+		$volumes = @(Get-VSSSupportedVolumes -ErrorAction Stop)
 		$volumeList.Clear()
 		
 		$totalVolumes = $volumes.Count
@@ -471,35 +494,9 @@ $window.FindName("btnRefreshVolumes").Add_Click({
 		
 		foreach ($vol in $volumes) {
 			$currentVolume++
-			$progressPercent = [math]::Round(($currentVolume / $totalVolumes) * 100)
+			$progressPercent = if ($totalVolumes -gt 0) { [math]::Round(($currentVolume / $totalVolumes) * 100) } else { 100 }
 			Update-Progress $progressPercent "Processing volume $currentVolume of $totalVolumes"
-			
-			# Calculate usage statistics
-			$capacityGB = [math]::Round($vol.Capacity / 1GB, 2)
-			$freeSpaceGB = [math]::Round($vol.FreeSpace / 1GB, 2)
-			$usedSpaceGB = [math]::Round(($vol.Capacity - $vol.FreeSpace) / 1GB, 2)
-			$usagePercent = if ($vol.Capacity -gt 0) { [math]::Round((($vol.Capacity - $vol.FreeSpace) / $vol.Capacity) * 100, 1) } else { 0 }
-			
-			# Determine usage color based on percentage
-			$usageColor = switch ($usagePercent) {
-				{ $_ -lt 70 } { "#4CAF50" }  # Green for low usage
-				{ $_ -lt 85 } { "#FF9800" }  # Orange for medium usage
-				default { "#F44336" }         # Red for high usage
-			}
-			
-			$volumeInfo = [PSCustomObject]@{
-				DriveLetter = $vol.DriveLetter
-				VolumeName = if ($vol.Label) { $vol.Label } else { "Local Disk" }
-				FileSystem = $vol.FileSystem
-				CapacityGB = $capacityGB
-				FreeSpaceGB = $freeSpaceGB
-				UsedSpaceGB = $usedSpaceGB
-				UsagePercent = $usagePercent
-				UsagePercentText = "$usagePercent%"
-				UsageColor = $usageColor
-				DeviceID = $vol.DeviceID
-			}
-			$volumeList.Add($volumeInfo)
+			$volumeList.Add($vol)
 		}
 		
 		Hide-Progress "Volumes refreshed successfully - Found $($volumeList.Count) volumes"
@@ -507,7 +504,7 @@ $window.FindName("btnRefreshVolumes").Add_Click({
 	}
 	catch {
 		Hide-Progress "Error refreshing volumes"
-		[System.Windows.MessageBox]::Show("Error refreshing volumes: $_", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+		[System.Windows.MessageBox]::Show("Error refreshing volumes: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
 	}
 })
 
@@ -521,8 +518,7 @@ $window.FindName("btnRefreshShadowCopies").Add_Click({
 		if ($volId) {
 			Show-Progress "Refreshing shadow copies..." $true
 			
-			# Retrieve shadow copies for the selected volume (robust matching for trailing backslash differences)
-			$shadowCopies = Get-WmiObject -Class Win32_ShadowCopy | Where-Object { $_.VolumeName -like "*$volId*" }
+			$shadowCopies = @(Get-VSSShadowCopies -VolumePath $volId -ErrorAction Stop)
 			$shadowCopyList.Clear()
 			
 			$totalCopies = $shadowCopies.Count
@@ -530,47 +526,9 @@ $window.FindName("btnRefreshShadowCopies").Add_Click({
 			
 			foreach ($copy in $shadowCopies) {
 				$currentCopy++
-				$progressPercent = [math]::Round(($currentCopy / $totalCopies) * 100)
+				$progressPercent = if ($totalCopies -gt 0) { [math]::Round(($currentCopy / $totalCopies) * 100) } else { 100 }
 				Update-Progress $progressPercent "Processing shadow copy $currentCopy of $totalCopies"
-				
-				$created = try { 
-					[System.Management.ManagementDateTimeConverter]::ToDateTime($copy.InstallDate)
-				} catch { 
-					Get-Date $copy.InstallDate
-				}
-				
-				# Calculate age
-				$age = if ($created) {
-					$timespan = (Get-Date) - $created
-					if ($timespan.Days -gt 0) { "$($timespan.Days)d" }
-					elseif ($timespan.Hours -gt 0) { "$($timespan.Hours)h" }
-					elseif ($timespan.Minutes -gt 0) { "$($timespan.Minutes)m" }
-					else { "<1m" }
-				} else { "Unknown" }
-				
-				# Determine state color
-				$stateColor = switch ($copy.State) {
-					"Created" { "#4CAF50" }      # Green
-					"Active" { "#2196F3" }       # Blue
-					"Preparing" { "#FF9800" }    # Orange
-					"Failed" { "#F44336" }       # Red
-					default { "#757575" }         # Gray
-				}
-				
-				# Estimate size (this is approximate as VSS doesn't provide exact size)
-				$sizeMB = if ($copy.Size) { [math]::Round($copy.Size / 1MB, 1) } else { "N/A" }
-				
-				$shadowInfo = [PSCustomObject]@{
-					ShadowID = $copy.ID
-					CreationTime = if ($created) { $created.ToString("yyyy-MM-dd HH:mm:ss") } else { "Unknown" }
-					NoWriters = $copy.NoWriters
-					State = $copy.State
-					StateColor = $stateColor
-					SizeMB = $sizeMB
-					Age = $age
-					VolumePath = $copy.VolumeName
-				}
-				$shadowCopyList.Add($shadowInfo)
+				$shadowCopyList.Add($copy)
 			}
 			
 			Hide-Progress "Shadow copies refreshed - Found $($shadowCopyList.Count) copies"
@@ -581,7 +539,7 @@ $window.FindName("btnRefreshShadowCopies").Add_Click({
 	}
 	catch {
 		Hide-Progress "Error refreshing shadow copies"
-		[System.Windows.MessageBox]::Show("Error refreshing shadow copies: $_", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+		[System.Windows.MessageBox]::Show("Error refreshing shadow copies: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
 	}
 })
 
@@ -595,20 +553,16 @@ $window.FindName("btnCreateShadowCopy").Add_Click({
 		if ($volId) {
 			Show-Progress "Creating shadow copy..." $true
 			
-			# Simulate progress for shadow copy creation
 			Update-Progress 25 "Initializing shadow copy creation..."
-			Start-Sleep -Milliseconds 500
-			
 			Update-Progress 50 "Creating shadow copy..."
-			New-VSSShadowCopy -VolumePath $volId | Out-Null
+			$created = New-VSSShadowCopy -VolumePath $volId -Confirm:$false -ErrorAction Stop
 			
-			Update-Progress 75 "Finalizing shadow copy..."
-			Start-Sleep -Milliseconds 300
+			if (-not $created -or -not $created.Success) {
+				throw "Shadow copy creation did not return a successful result."
+			}
 			
 			Update-Progress 100 "Shadow copy created successfully"
-			Start-Sleep -Milliseconds 200
-			
-			Hide-Progress "Shadow copy created successfully"
+			Hide-Progress "Shadow copy created successfully: $($created.ShadowID)"
 			# Refresh list after creation
 			$window.FindName("btnRefreshShadowCopies").RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
 		} else {
@@ -618,7 +572,7 @@ $window.FindName("btnCreateShadowCopy").Add_Click({
 	}
 	catch {
 		Hide-Progress "Error creating shadow copy"
-		[System.Windows.MessageBox]::Show("Error creating shadow copy: $_", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+		[System.Windows.MessageBox]::Show("Error creating shadow copy: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
 	}
 })
 
@@ -631,24 +585,20 @@ $window.FindName("btnDeleteShadowCopy").Add_Click({
 			if ($sel) { $volId = $sel.DeviceID }
 		}
 		if ($selectedCopy -and $volId) {
-			$result = [System.Windows.MessageBox]::Show("Are you sure you want to delete this shadow copy?", "Confirm Deletion", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
+			$result = [System.Windows.MessageBox]::Show("Are you sure you want to delete this shadow copy?`n`n$($selectedCopy.ShadowID)", "Confirm Deletion", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
 			
 			if ($result -eq [System.Windows.MessageBoxResult]::Yes) {
 				Show-Progress "Deleting shadow copy..." $true
 				
-				# Simulate progress for shadow copy deletion
 				Update-Progress 25 "Preparing for deletion..."
-				Start-Sleep -Milliseconds 300
-				
 				Update-Progress 50 "Deleting shadow copy..."
-				Remove-VSSShadowCopy -VolumePath $volId -ShadowCopyID $selectedCopy.ShadowID -Confirm:$false | Out-Null
+				$deleted = Remove-VSSShadowCopy -VolumePath $volId -ShadowCopyID $selectedCopy.ShadowID -Confirm:$false -ErrorAction Stop
 				
-				Update-Progress 75 "Cleaning up..."
-				Start-Sleep -Milliseconds 200
+				if (-not $deleted -or -not $deleted.Success) {
+					throw "Shadow copy deletion did not return a successful result."
+				}
 				
 				Update-Progress 100 "Shadow copy deleted successfully"
-				Start-Sleep -Milliseconds 200
-				
 				Hide-Progress "Shadow copy deleted successfully"
 				# Refresh list after deletion
 				$window.FindName("btnRefreshShadowCopies").RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
@@ -660,7 +610,7 @@ $window.FindName("btnDeleteShadowCopy").Add_Click({
 	}
 	catch {
 		Hide-Progress "Error deleting shadow copy"
-		[System.Windows.MessageBox]::Show("Error deleting shadow copy: $_", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+		[System.Windows.MessageBox]::Show("Error deleting shadow copy: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
 	}
 })
 

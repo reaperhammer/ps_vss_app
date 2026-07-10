@@ -41,16 +41,28 @@ You can also use the core functions directly in PowerShell:
 . .\main.ps1
 
 # List all VSS-supported volumes
-Get-VSSSupportedVolumes
+Get-VSSSupportedVolumes | Format-Table
 
 # View shadow copies for C: drive
-Get-VSSShadowCopies -VolumePath "C"
+Get-VSSShadowCopies -VolumePath "C:" | Format-Table
 
 # Create a new shadow copy
 New-VSSShadowCopy -VolumePath "C:"
 
+# Preview shadow copy deletion without making changes
+Remove-VSSShadowCopy -VolumePath "C:" -WhatIf
+
 # Remove shadow copies (with confirmation)
 Remove-VSSShadowCopy -VolumePath "C:"
+```
+
+### Tests
+
+Run the helper-function test suite with Windows PowerShell:
+
+```powershell
+Import-Module Pester
+Invoke-Pester -Script .\tests
 ```
 
 ### GUI Interface
@@ -100,9 +112,10 @@ ps_vss_app/
    - Verify you're using Windows PowerShell 5.1 (not PowerShell 7)
    - Check that .NET Framework is installed
 
-4. **Missing PNG files warning**
+4. **Missing PNG files**
    - The application will create the assets directory automatically
-   - GUI will function without icons, but some visual elements may be missing
+   - The GUI will start even if some PNG assets are missing; missing toolbar/tab icons render as blank cells, and missing image sources are cleared automatically
+   - `assets/png/app_icon.png` is the only icon that previously caused a hard failure during XAML parsing; this is now handled safely and the window simply uses the default icon if it is missing
 
 ## Security & Permissions
 
