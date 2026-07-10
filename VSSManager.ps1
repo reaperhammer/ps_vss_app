@@ -483,24 +483,32 @@ $window.FindName("dgVolumes").Add_SelectionChanged({
 # Toggle row selection directly when the CheckBox column cell (DisplayIndex 0) is clicked,
 # allowing multi-select without holding Ctrl, while preserving shift-select on other columns.
 $window.FindName("dgVolumes").Add_PreviewMouseLeftButtonDown({
-	param($sender, $args)
-	$dep = $args.OriginalSource -as [System.Windows.DependencyObject]
-	while ($null -ne $dep -and $dep -isnot [System.Windows.Controls.DataGridCell]) {
-		$dep = [System.Windows.Media.VisualTreeHelper]::GetParent($dep)
-	}
-	if ($null -ne $dep) {
-		$cell = $dep -as [System.Windows.Controls.DataGridCell]
-		if ($cell.Column.DisplayIndex -eq 0) {
-			$rowDep = $cell
-			while ($null -ne $rowDep -and $rowDep -isnot [System.Windows.Controls.DataGridRow]) {
-				$rowDep = [System.Windows.Media.VisualTreeHelper]::GetParent($rowDep)
-			}
-			if ($null -ne $rowDep) {
-				$row = $rowDep -as [System.Windows.Controls.DataGridRow]
-				$row.IsSelected = -not $row.IsSelected
-				$args.Handled = $true
+	param($sender, $e)
+	
+	try {
+		$dep = $e.OriginalSource -as [System.Windows.DependencyObject]
+		while ($null -ne $dep -and $dep -isnot [System.Windows.Controls.DataGridCell]) {
+			$dep = [System.Windows.Media.VisualTreeHelper]::GetParent($dep)
+		}
+		
+		if ($null -ne $dep) {
+			$cell = $dep -as [System.Windows.Controls.DataGridCell]
+			$colIdx = $sender.Columns.IndexOf($cell.Column)
+			
+			if ($colIdx -eq 0) {
+				$rowDep = $cell
+				while ($null -ne $rowDep -and $rowDep -isnot [System.Windows.Controls.DataGridRow]) {
+					$rowDep = [System.Windows.Media.VisualTreeHelper]::GetParent($rowDep)
+				}
+				if ($null -ne $rowDep) {
+					$row = $rowDep -as [System.Windows.Controls.DataGridRow]
+					$row.IsSelected = -not $row.IsSelected
+					$e.Handled = $true
+				}
 			}
 		}
+	} catch {
+		# Silent failure
 	}
 })
 
@@ -619,36 +627,60 @@ $window.FindName("btnCreateShadowCopy").Add_Click({
 
 $window.FindName("btnDeleteShadowCopy").Add_Click({
 	try {
-		$selectedCopy = $window.FindName("dgShadowCopies").SelectedItem
-		if ($selectedCopy) {
-			# Use the shadow copy's own VolumeName (device path) for deletion
-			$volPath = $selectedCopy.VolumePath
-			$displayVolume = if ($selectedCopy.RequestedVolume) { $selectedCopy.RequestedVolume } else { $volPath }
-			$result = [System.Windows.MessageBox]::Show("Are you sure you want to delete this shadow copy?`n`nVolume: $displayVolume`nID: $($selectedCopy.ShadowID)", "Confirm Deletion", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
+		$selectedCopies = @($window.FindName("dgShadowCopies").SelectedItems)
+		if ($selectedCopies.Count -gt 0) {
+			$confirmMessage = ""
+			if ($selectedCopies.Count -eq 1) {
+				$copy = $selectedCopies[0]
+				$displayVolume = if ($copy.RequestedVolume) { $copy.RequestedVolume } else { $copy.VolumePath }
+				$confirmMessage = "Are you sure you want to delete this shadow copy?`n`nVolume: $displayVolume`nID: $($copy.ShadowID)"
+			} else {
+				$confirmMessage = "Are you sure you want to delete these $($selectedCopies.Count) selected shadow copies?"
+			}
+			
+			$result = [System.Windows.MessageBox]::Show($confirmMessage, "Confirm Deletion", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
 			
 			if ($result -eq [System.Windows.MessageBoxResult]::Yes) {
-				Show-Progress "Deleting shadow copy..." $true
+				Show-Progress "Deleting shadow copies..." $true
 				
-				Update-Progress 50 "Deleting shadow copy..."
-				$deleted = Remove-VSSShadowCopy -VolumePath $volPath -ShadowCopyID $selectedCopy.ShadowID -Confirm:$false -ErrorAction Stop
+				$totalCopies = $selectedCopies.Count
+				$currentCopyIdx = 0
+				$successCount = 0
+				$errors = @()
 				
-				if (-not $deleted -or -not $deleted.Success) {
-					throw "Shadow copy deletion did not return a successful result."
+				foreach ($copy in $selectedCopies) {
+					$currentCopyIdx++
+					Update-Progress ([math]::Round(($currentCopyIdx / $totalCopies) * 100)) "Deleting shadow copy $currentCopyIdx of $totalCopies..."
+					try {
+						$deleted = Remove-VSSShadowCopy -VolumePath $copy.VolumePath -ShadowCopyID $copy.ShadowID -Confirm:$false -ErrorAction Stop
+						if ($deleted -and $deleted.Success) {
+							$successCount++
+						} else {
+							$errors += "ID $($copy.ShadowID): Deletion did not return a successful result."
+						}
+					} catch {
+						$errors += "ID $($copy.ShadowID): $($_.Exception.Message)"
+					}
 				}
 				
-				Update-Progress 100 "Shadow copy deleted successfully"
-				Hide-Progress "Shadow copy deleted successfully"
+				if ($errors.Count -gt 0) {
+					Hide-Progress "Shadow copies deleted: $successCount succeeded, $($errors.Count) failed"
+					[System.Windows.MessageBox]::Show("Completed with errors:`n`n" + ($errors -join "`n"), "Partial Failure", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+				} else {
+					Hide-Progress "Deleted $successCount shadow copies successfully"
+				}
+				
 				# Refresh list after deletion
 				$window.FindName("btnRefreshShadowCopies").RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
 			}
 		} else {
-			Hide-Progress "Please select a shadow copy to delete"
-			[System.Windows.MessageBox]::Show("Please select a shadow copy to delete from the list", "Information", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+			Hide-Progress "Please select at least one shadow copy to delete"
+			[System.Windows.MessageBox]::Show("Please select at least one shadow copy to delete from the list", "Information", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
 		}
 	}
 	catch {
-		Hide-Progress "Error deleting shadow copy"
-		[System.Windows.MessageBox]::Show("Error deleting shadow copy: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+		Hide-Progress "Error deleting shadow copies"
+		[System.Windows.MessageBox]::Show("Error deleting shadow copies: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
 	}
 })
 
