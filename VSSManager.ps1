@@ -509,31 +509,12 @@ $xaml = @"
 
 # Function to load XAML and create window
 function Load-Xaml {
-	# Get the script directory - try multiple methods to ensure we get the right path
-	$scriptDir = $null
-	
-	# Method 1: Try MyInvocation (works when script is run directly)
-	if ($MyInvocation.MyCommand.Path) {
-		$scriptDir = Split-Path $MyInvocation.MyCommand.Path
-		Write-Host "Using MyInvocation path: $scriptDir"
+	# Get the script directory - uses PSScriptRoot with fallback to current location
+	$scriptDir = $PSScriptRoot
+	if (-not $scriptDir) {
+		$scriptDir = (Get-Location).Path
 	}
-	# Method 2: Try PSScriptRoot (works in most contexts)
-	elseif ($PSScriptRoot) {
-		$scriptDir = $PSScriptRoot
-		Write-Host "Using PSScriptRoot path: $scriptDir"
-	}
-	# Method 3: Try to find the script in the current directory
-	else {
-		$currentDir = Get-Location
-		$scriptPath = Join-Path $currentDir "VSSManager.ps1"
-		if (Test-Path $scriptPath) {
-			$scriptDir = $currentDir
-			Write-Host "Using current directory path: $scriptDir"
-		} else {
-			Write-Warning "Could not determine script directory, using current location"
-			$scriptDir = $currentDir
-		}
-	}
+	Write-Host "Resolved script directory: $scriptDir"
 	
 	$assetsPath = Join-Path $scriptDir "assets\png"
 	
@@ -825,7 +806,8 @@ $window.FindName("btnCreateShadowCopy").Add_Click({
 					if ($created -and $created.Success) {
 						$successCount++
 					} else {
-						$errors += "$($vol.DriveLetter): Creation did not return a successful result."
+						$errText = if ($created -and $created.ErrorDescription) { $created.ErrorDescription } else { "Creation did not return a successful result." }
+						$errors += "$($vol.DriveLetter): $errText"
 					}
 				} catch {
 					$errors += "$($vol.DriveLetter): $($_.Exception.Message)"
@@ -1083,6 +1065,23 @@ $window.FindName("btnDismount").Add_Click({
 $window.Dispatcher.BeginInvoke([Action]{
 	$window.FindName("btnRefreshVolumes").RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
 	$window.FindName("btnRefreshWriters").RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
+	
+	# Disable Backup context option in GUI if backup support is not available
+	$diskshadowPath = Join-Path $env:SystemRoot "System32\diskshadow.exe"
+	$helperSource = Join-Path $PSScriptRoot "VssBackupHelper.cs"
+	$helperExe = Join-Path $PSScriptRoot "bin\VssBackupHelper.exe"
+	$hasBackupSupport = (Test-Path $diskshadowPath) -or (Test-Path $helperSource) -or (Test-Path $helperExe)
+	if (-not $hasBackupSupport) {
+		$cmb = $window.FindName("cmbContext")
+		if ($null -ne $cmb) {
+			foreach ($item in $cmb.Items) {
+				if ($item.Content -eq "Backup") {
+					$item.IsEnabled = $false
+					$item.ToolTip = "Backup context is not supported on this Windows Client edition."
+				}
+			}
+		}
+	}
 })
 
 # Show the window

@@ -16,13 +16,20 @@ A modern PowerShell-based application for managing Windows Volume Shadow Copy Se
 - **Create Shadow Copies**: Generate new volume snapshots with progress tracking  
 - **Delete Shadow Copies**: Remove individual or all shadow copies for a volume
 - **Volume Statistics**: Display capacity, free space, usage percentages, and file systems
+- **VSS Context Flexibility**: Support for `ClientAccessible`, `Backup`, `ClientAccessibleWriters`, and `AppRollback` contexts
+
+### ⚙️ Client-Side VSS Writer Support (Dynamic COM Interop)
+- Windows Client editions (e.g. Windows 10/11) do not support the server-only `diskshadow.exe` utility and limit WMI-based shadow copy creation to the `ClientAccessible` context (which ignores VSS writers).
+- VSS Manager resolves this limitation natively using a dynamically compiled C# helper utility ([VssBackupHelper.cs](VssBackupHelper.cs)).
+- The utility directly consumes the unmanaged VSS COM API (`IVssBackupComponents` from `vssapi.dll`), allowing full writer-freeze, application-consistent backups on client editions of Windows without requiring any external libraries or VC++ redistributables.
+- The wrapper is compiled on the fly at startup if `bin\VssBackupHelper.exe` is missing.
 
 ## Requirements
 
 - **Windows 10/11** (or Windows Server equivalent)
 - **Windows PowerShell 5.1** (not compatible with PowerShell 7/Core)
 - **Administrator privileges** (required for VSS operations)
-- **.NET Framework** (for WPF GUI components)
+- **.NET Framework** (for WPF GUI and dynamic compilation components)
 
 ## Installation & Usage
 
@@ -46,8 +53,11 @@ Get-VSSSupportedVolumes | Format-Table
 # View shadow copies for C: drive
 Get-VSSShadowCopies -VolumePath "C:" | Format-Table
 
-# Create a new shadow copy
+# Create a new shadow copy with default context
 New-VSSShadowCopy -VolumePath "C:"
+
+# Create an application-consistent backup shadow copy with VSS writers active
+New-VSSShadowCopy -VolumePath "C:" -Context "Backup"
 
 # Preview shadow copy deletion without making changes
 Remove-VSSShadowCopy -VolumePath "C:" -WhatIf
@@ -76,7 +86,7 @@ The GUI provides two main tabs:
 
 #### Shadow Copy Operations  
 - View existing shadow copies for selected volumes
-- Create new shadow copies with progress tracking
+- Create new shadow copies with progress tracking (fully supporting `Backup` and `ClientAccessible` contexts)
 - Delete selected shadow copies with confirmation dialogs
 - Real-time status updates and operation feedback
 
@@ -84,17 +94,19 @@ The GUI provides two main tabs:
 
 ```
 ps_vss_app/
-├── main.ps1           # Core VSS functions
+├── main.ps1           # Core VSS functions and compilation routines
 ├── VSSManager.ps1     # WPF GUI application
+├── VssBackupHelper.cs # Native C# VSS COM Interop requester source
 ├── Launch.bat         # Batch file launcher
 ├── LICENSE           # Apache 2.0 License
-└── assets/png/       # GUI icons and images
+├── assets/png/       # GUI icons and images
+└── bin/              # Location of compiled VssBackupHelper.exe
 ```
 
 ## Compatibility Notes
 
 - **PowerShell Version**: This application requires Windows PowerShell 5.1 and will not work with PowerShell 7 (Core)
-- **Platform**: Windows-only (uses Windows Management Instrumentation)
+- **Platform**: Windows-only (uses Windows Management Instrumentation and .NET/COM)
 - **Architecture**: Compatible with both x64 and x86 Windows systems
 
 ## Troubleshooting

@@ -5,6 +5,7 @@ $sut = Join-Path $repoRoot 'main.ps1'
 Describe 'VSS helper functions' {
     # Define a placeholder function for vssadmin so Pester 3.x can mock it successfully
     function vssadmin {}
+    function diskshadow {}
     . $sut
 
 
@@ -76,6 +77,7 @@ Describe 'VSS helper functions' {
                 )
             }
             Mock -CommandName Test-Path -MockWith { return $true }
+            Mock -CommandName Test-VSSAdministrator -MockWith { return $true }
 
             $writers = @(Get-VSSWriters)
             $writers.Count | Should Be 1
@@ -122,6 +124,79 @@ Describe 'VSS helper functions' {
             $storage[0].AllocatedSpaceGB | Should Be 5
             $storage[0].UsedSpaceGB | Should Be 1
         }
+
+        It 'correctly parses Win32_ShadowStorage references with escaped backslashes' {
+            Mock -CommandName Get-WmiObject -MockWith {
+                if ($Class -eq 'Win32_ShadowStorage') {
+                    return @(
+                        [PSCustomObject]@{
+                            Volume = 'Win32_Volume.DeviceID="\\\\?\\Volume{12345678-0000-0000-0000-100000000000}\\"'
+                            DiffVolume = 'Win32_Volume.DeviceID="\\\\?\\Volume{12345678-0000-0000-0000-100000000000}\\"'
+                            MaxSpace = 10737418240 # 10GB
+                            AllocatedSpace = 5368709120 # 5GB
+                            UsedSpace = 1073741824 # 1GB
+                        }
+                    )
+                }
+            }
+            Mock -CommandName Test-VSSAdministrator -MockWith { return $true }
+            Mock -CommandName Get-VSSSupportedVolumes -MockWith {
+                return @(
+                    [PSCustomObject]@{
+                        DeviceID = '\\?\Volume{12345678-0000-0000-0000-100000000000}\'
+                        DriveLetter = 'C:'
+                        VolumeName = 'Local Disk'
+                    }
+                )
+            }
+
+            $storage = @(Get-VSSShadowStorage)
+            $storage.Count | Should Be 1
+            $storage[0].VolumeLetter | Should Be 'C:'
+            $storage[0].DiffVolumeLetter | Should Be 'C:'
+            $storage[0].MaxSpaceGB | Should Be 10
+        }
+
+        It 'filters by VolumePath correctly even with escaped paths' {
+            Mock -CommandName Get-WmiObject -MockWith {
+                if ($Class -eq 'Win32_ShadowStorage') {
+                    return @(
+                        [PSCustomObject]@{
+                            Volume = 'Win32_Volume.DeviceID="\\\\?\\Volume{12345678-0000-0000-0000-100000000000}\\"'
+                            DiffVolume = 'Win32_Volume.DeviceID="\\\\?\\Volume{12345678-0000-0000-0000-100000000000}\\"'
+                            MaxSpace = 10737418240
+                            AllocatedSpace = 0
+                            UsedSpace = 0
+                        }
+                    )
+                }
+                elseif ($Class -eq 'Win32_Volume') {
+                    return @(
+                        [PSCustomObject]@{
+                            DeviceID = '\\?\Volume{12345678-0000-0000-0000-100000000000}\'
+                            DriveLetter = 'C:'
+                            Label = 'Local Disk'
+                            FileSystem = 'NTFS'
+                            DriveType = 3
+                        }
+                    )
+                }
+            }
+            Mock -CommandName Test-VSSAdministrator -MockWith { return $true }
+            Mock -CommandName Get-VSSSupportedVolumes -MockWith {
+                return @(
+                    [PSCustomObject]@{
+                        DeviceID = '\\?\Volume{12345678-0000-0000-0000-100000000000}\'
+                        DriveLetter = 'C:'
+                        VolumeName = 'Local Disk'
+                    }
+                )
+            }
+
+            $storage = @(Get-VSSShadowStorage -VolumePath 'C:')
+            $storage.Count | Should Be 1
+            $storage[0].VolumeLetter | Should Be 'C:'
+        }
     }
 
     Context 'VSS Shadow Copy Mount & Dismount' {
@@ -161,6 +236,183 @@ Describe 'VSS helper functions' {
             $res.Success | Should Be $true
             $res.MountPath | Should Be 'C:\mount'
             $script:cmdExecuted | Should Be $true
+        }
+    }
+
+    Context 'VSS Shadow Copy Creation' {
+        It 'handles Backup context failure with detailed error' {
+            Mock -CommandName Test-VSSAdministrator -MockWith { return $true }
+            Mock -CommandName Get-VSSBackupHelperPath -MockWith { return $null }
+            Mock -CommandName Resolve-VSSVolumePath -MockWith {
+                return [PSCustomObject]@{
+                    DeviceID = '\\?\Volume{12345678-0000-0000-0000-100000000000}\'
+                }
+            }
+            Mock -CommandName Get-WmiObject -MockWith {
+                if ($Class -eq 'Win32_ShadowCopy') {
+                    $mock = [PSCustomObject]@{}
+                    $mock | Add-Member -MemberType ScriptMethod -Name "Create" -Value {
+                        param($volume, $context)
+                        return [PSCustomObject]@{
+                            ReturnValue = 5
+                            ShadowID = $null
+                        }
+                    }
+                    return $mock
+                }
+            }
+
+            # New-VSSShadowCopy will write an error, we can check that it returns the object with ErrorDescription
+            $res = New-VSSShadowCopy -VolumePath 'C:' -Context 'Backup' -Confirm:$false
+            $res.Success | Should Be $false
+            $res.ReturnValue | Should Be 5
+            $res.ErrorDescription | Should Match "Unsupported shadow copy context"
+        }
+
+        It 'piggybacks on diskshadow if available and Backup context is requested' {
+            Mock -CommandName Test-VSSAdministrator -MockWith { return $true }
+            Mock -CommandName Resolve-VSSVolumePath -MockWith {
+                return [PSCustomObject]@{
+                    DeviceID = '\\?\Volume{12345678-0000-0000-0000-100000000000}\'
+                    DriveLetter = 'C:'
+                }
+            }
+            
+            Mock -CommandName Test-Path -MockWith {
+                if ($Path -like "*diskshadow.exe") { return $true }
+                return $false
+            }
+            
+            Mock -CommandName Get-Command -MockWith {
+                if ($Name -eq 'diskshadow') {
+                    return [PSCustomObject]@{ Name = 'diskshadow'; CommandType = 'ExternalScript' }
+                }
+                return $null
+            }
+            
+            $script:diskshadowExecuted = $false
+            Mock -CommandName diskshadow -MockWith {
+                $script:diskshadowExecuted = $true
+                $global:LASTEXITCODE = 0
+                return @(
+                    "Microsoft DiskShadow version 1.0",
+                    "Creating shadow copy...",
+                    "* Created shadow copy {885a0833-28eb-4e67-94a2-11c78479e0f6} on volume C:\"
+                )
+            }
+
+            $res = New-VSSShadowCopy -VolumePath 'C:' -Context 'Backup' -Confirm:$false
+            $res.Success | Should Be $true
+            $res.ShadowID | Should Be '{885a0833-28eb-4e67-94a2-11c78479e0f6}'
+            $script:diskshadowExecuted | Should Be $true
+        }
+
+        It 'uses VssBackupHelper if helper is available' {
+            Mock -CommandName Test-VSSAdministrator -MockWith { return $true }
+            Mock -CommandName Resolve-VSSVolumePath -MockWith {
+                return [PSCustomObject]@{
+                    DeviceID = '\\?\Volume{12345678-0000-0000-0000-100000000000}\'
+                    DriveLetter = 'C:'
+                }
+            }
+            
+            function MockHelper {
+                $global:LASTEXITCODE = 0
+                return @(
+                    "SUCCESS",
+                    "SnapshotID: {77777777-8888-9999-aaaa-bbbbbbbbbbbb}",
+                    "DeviceObject: \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy7",
+                    "SnapshotSetID: {11111111-2222-3333-4444-555555555555}"
+                )
+            }
+            
+            Mock -CommandName Get-VSSBackupHelperPath -MockWith {
+                return "MockHelper"
+            }
+
+            $res = New-VSSShadowCopy -VolumePath 'C:' -Context 'Backup' -Confirm:$false
+            $res.Success | Should Be $true
+            $res.ShadowID | Should Be '{77777777-8888-9999-aaaa-bbbbbbbbbbbb}'
+            $res.Context | Should Be 'Backup'
+        }
+    }
+
+    Context 'VSS Shadow Storage Limit configuration' {
+        It 'uses the temporary shadow copy workaround when direct creation fails' {
+            Mock -CommandName Test-VSSAdministrator -MockWith { return $true }
+            Mock -CommandName Resolve-VSSVolumePath -MockWith {
+                return [PSCustomObject]@{
+                    DeviceID = '\\?\Volume{12345678-0000-0000-0000-100000000000}\'
+                    CanonicalDevice = '\\?\VOLUME{12345678-0000-0000-0000-100000000000}'
+                    DriveLetter = 'C:'
+                }
+            }
+            
+            $script:tempShadowCreated = $false
+            $script:tempShadowDeleted = $false
+            $script:limitApplied = $false
+
+            # Mock Get-WmiObject to return no storage at first (so it attempts to create)
+            # but return the storage when searched inside the workaround
+            $script:storageMockCount = 0
+            Mock -CommandName Get-WmiObject -MockWith {
+                if ($Class -eq 'Win32_ShadowStorage') {
+                    $script:storageMockCount++
+                    if ($script:storageMockCount -eq 1) {
+                        return @() # No storage initially
+                    } else {
+                        # Storage exists now because of shadow copy
+                        $mockStorage = [PSCustomObject]@{
+                            Volume = 'Win32_Volume.DeviceID="\\\\?\\Volume{12345678-0000-0000-0000-100000000000}\\"'
+                            DiffVolume = 'Win32_Volume.DeviceID="\\\\?\\Volume{12345678-0000-0000-0000-100000000000}\\"'
+                            MaxSpace = 0
+                        }
+                        $mockStorage | Add-Member -MemberType ScriptMethod -Name "Put" -Value {
+                            $script:limitApplied = $true
+                            return [PSCustomObject]@{ Path = 'Win32_ShadowStorage' }
+                        }
+                        return @($mockStorage)
+                    }
+                }
+                elseif ($Class -eq 'Win32_Volume') {
+                    return @(
+                        [PSCustomObject]@{
+                            DeviceID = '\\?\Volume{12345678-0000-0000-0000-100000000000}\'
+                            DriveLetter = 'C:'
+                        }
+                    )
+                }
+            }
+
+            Mock -CommandName New-VSSShadowCopy -MockWith {
+                $script:tempShadowCreated = $true
+                return [PSCustomObject]@{
+                    Success = $true
+                    ShadowID = '{98765432-0000-0000-0000-100000000000}'
+                }
+            }
+
+            Mock -CommandName Remove-VSSShadowCopy -MockWith {
+                $script:tempShadowDeleted = $true
+                return [PSCustomObject]@{ Success = $true }
+            }
+
+            # WMI class mock to fail direct creation
+            Mock -CommandName Get-WmiObject -ParameterFilter { $List -eq $true } -MockWith {
+                $mockClass = [PSCustomObject]@{}
+                $mockClass | Add-Member -MemberType ScriptMethod -Name "Create" -Value {
+                    param($volume, $diffVolume, $limit)
+                    # direct create fails
+                    return [PSCustomObject]@{ ReturnValue = 10 }
+                }
+                return $mockClass
+            }
+
+            $res = Set-VSSShadowStorageLimit -VolumePath 'C:' -MaxSpaceBytes 5368709120
+            $res.Success | Should Be $true
+            $script:tempShadowCreated | Should Be $true
+            $script:limitApplied | Should Be $true
+            $script:tempShadowDeleted | Should Be $true
         }
     }
 }

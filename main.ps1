@@ -374,6 +374,38 @@ function Get-VSSShadowCopies {
     }
 }
 
+function Get-VSSBackupHelperPath {
+    $helperPath = Join-Path $PSScriptRoot "bin\VssBackupHelper.exe"
+    if (Test-Path $helperPath) {
+        return $helperPath
+    }
+    # Try to compile it on the fly if source exists
+    $sourcePath = Join-Path $PSScriptRoot "VssBackupHelper.cs"
+    if (Test-Path $sourcePath) {
+        $cscPath = Join-Path $env:SystemRoot "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+        if (-not (Test-Path $cscPath)) {
+            $cscPath = Join-Path $env:SystemRoot "Microsoft.NET\Framework\v4.0.30319\csc.exe"
+        }
+        if (Test-Path $cscPath) {
+            $binDir = Join-Path $PSScriptRoot "bin"
+            if (-not (Test-Path $binDir)) {
+                New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+            }
+            Write-Verbose "Compiling VssBackupHelper.cs on the fly..."
+            try {
+                & $cscPath /target:exe /out:$helperPath $sourcePath | Out-Null
+            }
+            catch {
+                Write-Warning "Failed to compile VssBackupHelper.cs: $($_.Exception.Message)"
+            }
+            if (Test-Path $helperPath) {
+                return $helperPath
+            }
+        }
+    }
+    return $null
+}
+
 function New-VSSShadowCopy {
     <#
     .SYNOPSIS
@@ -403,25 +435,146 @@ function New-VSSShadowCopy {
         if ($PSCmdlet.ShouldProcess($resolvedVolume.DeviceID, "Create VSS shadow copy")) {
             Write-Verbose "Creating shadow copy for $($resolvedVolume.DeviceID). Description: $Description"
 
-            $shadowClass = Get-WmiObject -List Win32_ShadowCopy -ErrorAction Stop
-            $result = $shadowClass.Create($resolvedVolume.DeviceID, $Context)
-            $returnValue = if ($result.PSObject.Properties["ReturnValue"]) { [int]$result.ReturnValue } else { $null }
-            $shadowId = if ($result.PSObject.Properties["ShadowID"]) { $result.ShadowID } else { $null }
-            $success = ($returnValue -eq 0 -and -not [string]::IsNullOrWhiteSpace($shadowId))
+            # VssBackupHelper or DiskShadow fallback for non-ClientAccessible contexts
+            $useVssHelper = $false
+            $helperPath = $null
+            if ($Context -ne "ClientAccessible") {
+                $helperPath = Get-VSSBackupHelperPath
+                if ($helperPath) {
+                    $useVssHelper = $true
+                }
+            }
+
+            $useDiskShadow = $false
+            if (-not $useVssHelper -and $Context -eq "Backup") {
+                $diskshadowPath = Join-Path $env:SystemRoot "System32\diskshadow.exe"
+                if (Test-Path $diskshadowPath) {
+                    $useDiskShadow = $true
+                }
+            }
+
+            $returnValue = 0
+            $shadowId = $null
+            $success = $false
+            $errorDescription = $null
+
+            if ($useVssHelper) {
+                Write-Verbose "Using Dynamic VssBackupHelper tool for $Context context..."
+                $volLetter = $resolvedVolume.DriveLetter
+                if (-not $volLetter) {
+                    $volLetter = $resolvedVolume.Name
+                }
+                
+                try {
+                    $cmdResult = & $helperPath $volLetter $Context 2>&1
+                    $exitCode = $LASTEXITCODE
+
+                    $isSuccess = $false
+                    foreach ($line in $cmdResult) {
+                        if ($line -eq "SUCCESS") {
+                            $isSuccess = $true
+                        }
+                        if ($line -match '(?i)SnapshotID:\s*(?<id>{[a-f0-9\-]+})') {
+                            $shadowId = $Matches.id
+                        }
+                    }
+
+                    if ($exitCode -eq 0 -and $isSuccess -and $shadowId) {
+                        $success = $true
+                    } else {
+                        $returnValue = if ($exitCode -ne 0) { $exitCode } else { -1 }
+                        $errorDescription = "VssBackupHelper execution failed. Exit code: $exitCode. Output: " + ($cmdResult -join "`n")
+                    }
+                }
+                catch {
+                    $returnValue = -2
+                    $errorDescription = "Failed to run VssBackupHelper: $($_.Exception.Message)"
+                }
+            }
+            elseif ($useDiskShadow) {
+                Write-Verbose "Backup context requested and diskshadow is available. Piggybacking on diskshadow..."
+                $volLetter = $resolvedVolume.DriveLetter
+                if (-not $volLetter) {
+                    $volLetter = $resolvedVolume.Name
+                }
+                # Ensure the volume letter has a trailing backslash for diskshadow
+                if ($volLetter -notmatch '\\$') {
+                    $volLetter = $volLetter + "\"
+                }
+
+                $tempScript = [System.IO.Path]::GetTempFileName()
+                $scriptContent = @(
+                    "set verbose on",
+                    "set context persistent",
+                    "add volume $volLetter",
+                    "create"
+                )
+                $scriptContent | Out-File -FilePath $tempScript -Encoding ASCII -Force
+                
+                try {
+                    $diskshadowExe = "diskshadow"
+                    if (-not (Get-Command $diskshadowExe -ErrorAction SilentlyContinue)) {
+                        $diskshadowExe = $diskshadowPath
+                    }
+
+                    $cmdResult = & $diskshadowExe /s $tempScript 2>&1
+                    $exitCode = $LASTEXITCODE
+
+                    foreach ($line in $cmdResult) {
+                        if ($line -match '(?i)Created shadow copy\s*(?<id>{[a-f0-9\-]+})') {
+                            $shadowId = $Matches.id
+                            break
+                        }
+                    }
+
+                    if ($exitCode -eq 0 -and $shadowId) {
+                        $success = $true
+                    } else {
+                        $returnValue = if ($exitCode -ne 0) { $exitCode } else { -1 }
+                        $errorDescription = "diskshadow execution failed. Output: " + ($cmdResult -join "`n")
+                    }
+                }
+                catch {
+                    $returnValue = -2
+                    $errorDescription = "Failed to run diskshadow: $($_.Exception.Message)"
+                }
+                finally {
+                    if (Test-Path $tempScript) {
+                        Remove-Item -Path $tempScript -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            } else {
+                # Fallback to WMI
+                $shadowClass = Get-WmiObject -List Win32_ShadowCopy -ErrorAction Stop
+                $result = $shadowClass.Create($resolvedVolume.DeviceID, $Context)
+                $returnValue = if ($result.PSObject.Properties["ReturnValue"]) { [int]$result.ReturnValue } else { $null }
+                $shadowId = if ($result.PSObject.Properties["ShadowID"]) { $result.ShadowID } else { $null }
+                $success = ($returnValue -eq 0 -and -not [string]::IsNullOrWhiteSpace($shadowId))
+
+                $errorDescription = $null
+                if (-not $success) {
+                    if ($returnValue -eq 5) {
+                        $errorDescription = "Unsupported shadow copy context (WMI return code 5). Note that WMI's Win32_ShadowCopy.Create method does not support the 'Backup' context on Windows Client editions (e.g., Windows 10/11), which only support the 'ClientAccessible' context. Please use the 'ClientAccessible' context instead."
+                    } else {
+                        $errorDescription = "WMI return code: $returnValue"
+                    }
+                }
+            }
 
             $response = [PSCustomObject]@{
-                PSTypeName  = "VSS.CreateResult"
-                Success     = $success
-                ReturnValue = $returnValue
-                ShadowID    = $shadowId
-                VolumePath  = $VolumePath
-                DeviceID    = $resolvedVolume.DeviceID
-                Context     = $Context
-                Description = $Description
+                PSTypeName       = "VSS.CreateResult"
+                Success          = $success
+                ReturnValue      = $returnValue
+                ShadowID         = $shadowId
+                VolumePath       = $VolumePath
+                DeviceID         = $resolvedVolume.DeviceID
+                Context          = $Context
+                Description      = $Description
+                ErrorDescription = $errorDescription
             }
 
             if (-not $success) {
-                Write-Error "Failed to create shadow copy for '$VolumePath'. WMI return code: $returnValue"
+                Write-Error "Failed to create shadow copy for '$VolumePath'. $errorDescription"
             }
 
             return $response
@@ -537,7 +690,8 @@ function Get-VSSShadowStorage {
                 $diffVolId = $Matches.id -replace '\\+$', ''
             }
 
-            $canonicalVolId = if ($volId) { $volId.ToUpperInvariant() } else { $null }
+            $canonicalVolId = ConvertTo-VSSCanonicalVolumeName -Path $volId
+            $canonicalDiffVolId = ConvertTo-VSSCanonicalVolumeName -Path $diffVolId
             
             # Filter if a specific VolumePath was requested
             if ($canonicalDeviceId -and $canonicalVolId -ne $canonicalDeviceId) {
@@ -546,7 +700,7 @@ function Get-VSSShadowStorage {
 
             # Map to drive letters
             $volInfo = $allvols | Where-Object { (ConvertTo-VSSCanonicalVolumeName -Path $_.DeviceID) -eq $canonicalVolId }
-            $diffVolInfo = $allvols | Where-Object { (ConvertTo-VSSCanonicalVolumeName -Path $_.DeviceID) -eq ($diffVolId.ToUpperInvariant()) }
+            $diffVolInfo = $allvols | Where-Object { (ConvertTo-VSSCanonicalVolumeName -Path $_.DeviceID) -eq $canonicalDiffVolId }
 
             $volLetter = if ($volInfo) { $volInfo.DriveLetter } else { $volId }
             $diffVolLetter = if ($diffVolInfo) { $diffVolInfo.DriveLetter } else { $diffVolId }
@@ -636,10 +790,51 @@ function Set-VSSShadowStorageLimit {
                 $cmdResult = cmd.exe /c vssadmin add shadowstorage /For=$volLetter /On=$diffVolLetter /Max=$limitStr 2>&1
                 $success = ($LASTEXITCODE -eq 0)
                 if (-not $success) {
-                    if ($cmdResult -match "Invalid command") {
-                         throw "Shadow storage cannot be created manually on Windows Client editions. Windows automatically creates the storage association when the first shadow copy is taken on the volume. Please create a shadow copy on this volume first, then you will be able to change its storage limit."
-                    } else {
-                         throw "Failed to create shadow storage via WMI and vssadmin add: $cmdResult"
+                    # If we fail to add shadow storage directly (common on Windows Client),
+                    # attempt the temporary shadow copy workaround to initialize the association.
+                    Write-Verbose "Direct shadow storage creation failed. Attempting temporary shadow copy workaround on $($resolvedVol.DeviceID)..."
+                    
+                    $tempShadow = $null
+                    try {
+                        # Create a temporary shadow copy to force the OS to initialize the storage association
+                        $tempShadow = New-VSSShadowCopy -VolumePath $resolvedVol.DeviceID -Context "ClientAccessible" -Description "Temporary Shadow Copy for Storage Init" -Confirm:$false -ErrorAction Stop
+                        
+                        if ($tempShadow -and $tempShadow.Success -and $tempShadow.ShadowID) {
+                            # Look up the newly created storage association
+                            $newStorage = Get-WmiObject -Class Win32_ShadowStorage | Where-Object {
+                                $volId = $null
+                                if ($_.Volume -match 'DeviceID="(?<id>[^"]+)"') { $volId = $Matches.id }
+                                (ConvertTo-VSSCanonicalVolumeName -Path $volId) -eq $canonicalVol
+                            }
+                            
+                            if ($newStorage) {
+                                $newStorage.MaxSpace = $limit
+                                $putResult = $newStorage.Put()
+                                $success = ($null -ne $putResult)
+                            }
+                        }
+                    }
+                    catch {
+                        Write-Warning "Temporary shadow copy workaround failed: $($_.Exception.Message)"
+                    }
+                    finally {
+                        # Always clean up the temporary shadow copy if it was successfully created
+                        if ($tempShadow -and $tempShadow.Success -and $tempShadow.ShadowID) {
+                            try {
+                                Remove-VSSShadowCopy -VolumePath $resolvedVol.DeviceID -ShadowCopyID $tempShadow.ShadowID -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+                            }
+                            catch {
+                                Write-Warning "Failed to delete temporary shadow copy $($tempShadow.ShadowID): $($_.Exception.Message)"
+                            }
+                        }
+                    }
+                    
+                    if (-not $success) {
+                        if ($cmdResult -match "Invalid command") {
+                             throw "Shadow storage cannot be created manually on Windows Client editions. Windows automatically creates the storage association when the first shadow copy is taken on the volume. Please create a shadow copy on this volume first, then you will be able to change its storage limit."
+                        } else {
+                             throw "Failed to create shadow storage via WMI, vssadmin, or temporary shadow copy workaround: $cmdResult"
+                        }
                     }
                 }
             }
@@ -666,6 +861,10 @@ function Get-VSSWriters {
     param()
 
     try {
+        if (-not (Test-VSSAdministrator)) {
+            throw "Administrator privileges are required to query VSS Writers."
+        }
+
         $vssadminPath = Join-Path $env:SystemRoot "System32\vssadmin.exe"
         if (-not (Test-Path $vssadminPath)) {
             throw "vssadmin.exe not found on this system. Unable to query VSS Writers."
@@ -744,7 +943,7 @@ function Mount-VSSShadowCopy {
             throw "Administrator privileges are required to mount VSS shadow copies."
         }
 
-        $shadow = Get-WmiObject -Class Win32_ShadowCopy | Where-Object { $_.ID -eq $ShadowCopyID }
+        $shadow = Get-WmiObject -Class Win32_ShadowCopy -Filter "ID='$ShadowCopyID'"
         if (-not $shadow) {
             throw "Shadow copy with ID '$ShadowCopyID' not found."
         }
