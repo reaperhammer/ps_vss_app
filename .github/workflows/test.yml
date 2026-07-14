@@ -22,14 +22,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup PowerShell
-        uses: microsoft/setup-powershell@v1
-        with:
-          psVersion: '7.4'
-
       - name: Install Pester
         shell: pwsh
         run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
           Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser -MinimumVersion 5.7.0
           Import-Module Pester -MinimumVersion 5.7.0 -Force
           $pester = Get-Module -ListAvailable Pester | Sort-Object Version -Descending | Select-Object -First 1
