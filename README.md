@@ -9,6 +9,9 @@ A modern PowerShell-based application for managing Windows Volume Shadow Copy Se
 - **Shadow Copy Operations Tab**: Create, view, and delete shadow copies
 - **Real-time Progress Tracking**: Visual progress indicators for all operations
 - **Usage Statistics**: Color-coded volume capacity bars and usage percentages
+- **Dark Mode**: Toggle via right-click on the window background or `Ctrl+T`
+- **Keyboard Shortcuts**: `F5` (Refresh), `Ctrl+N` (New Shadow Copy), `Del` (Delete Selected), `Ctrl+E` (Export)
+- **Data Exporting**: Directly export details from the GUI to CSV/JSON
 
 ### 📋 Core Functionality
 - **List VSS-Supported Volumes**: Display all volumes that support shadow copies
@@ -17,6 +20,8 @@ A modern PowerShell-based application for managing Windows Volume Shadow Copy Se
 - **Delete Shadow Copies**: Remove individual or all shadow copies for a volume
 - **Volume Statistics**: Display capacity, free space, usage percentages, and file systems
 - **VSS Context Flexibility**: Support for `ClientAccessible`, `Backup`, `ClientAccessibleWriters`, and `AppRollback` contexts
+- **Robust VSS Writer Support**: Direct COM-based querying with fallback support if `vssadmin` fails (typical on non-English locales), and optional `-ForceCom` flag
+- **CLI Exporting**: Export data via `Export-VSSReport` cmdlet
 
 ### ⚙️ Client-Side VSS Writer Support (Dynamic COM Interop)
 - Windows Client editions (e.g. Windows 10/11) do not support the server-only `diskshadow.exe` utility and limit WMI-based shadow copy creation to the `ClientAccessible` context (which ignores VSS writers).
@@ -41,11 +46,11 @@ A modern PowerShell-based application for managing Windows Volume Shadow Copy Se
 
 ### Command Line Usage
 
-You can also use the core functions directly in PowerShell:
+You can import the module directly in PowerShell:
 
 ```powershell
-# Import the functions
-. .\main.ps1
+# Import the module manifest
+Import-Module .\ps_vss_app.psd1
 
 # List all VSS-supported volumes
 Get-VSSSupportedVolumes | Format-Table
@@ -59,6 +64,9 @@ New-VSSShadowCopy -VolumePath "C:"
 # Create an application-consistent backup shadow copy with VSS writers active
 New-VSSShadowCopy -VolumePath "C:" -Context "Backup"
 
+# Export report of shadow copies to CSV
+Export-VSSReport -Kind ShadowCopies -VolumePath "C:" -Path "C:\vss-copies.csv"
+
 # Preview shadow copy deletion without making changes
 Remove-VSSShadowCopy -VolumePath "C:" -WhatIf
 
@@ -66,13 +74,15 @@ Remove-VSSShadowCopy -VolumePath "C:" -WhatIf
 Remove-VSSShadowCopy -VolumePath "C:"
 ```
 
+*Note: You can still dot-source `. .\main.ps1` for backward compatibility.*
+
 ### Tests
 
-Run the helper-function test suite with Windows PowerShell:
+Run the modern Pester test suite (Pester 5+ is supported and automatically installed if missing) using the build script:
 
 ```powershell
-Import-Module Pester
-Invoke-Pester -Script .\tests
+# Run the test runner
+.\Build.ps1
 ```
 
 ### GUI Interface
@@ -94,18 +104,24 @@ The GUI provides two main tabs:
 
 ```
 ps_vss_app/
-├── main.ps1           # Core VSS functions and compilation routines
+├── ps_vss_app.psd1    # PowerShell Module Manifest (v1.1.0)
+├── ps_vss_app.psm1    # PowerShell Module Code
+├── main.ps1           # Backward-compatibility shim
 ├── VSSManager.ps1     # WPF GUI application
 ├── VssBackupHelper.cs # Native C# VSS COM Interop requester source
 ├── Launch.bat         # Batch file launcher
-├── LICENSE           # Apache 2.0 License
-├── assets/png/       # GUI icons and images
-└── bin/              # Location of compiled VssBackupHelper.exe
+├── Build.ps1          # Test runner script (Pester 5+)
+├── CHANGELOG.md       # Changelog file
+├── LICENSE            # Apache 2.0 License
+├── assets/png/        # GUI icons and images
+└── bin/               # Location of compiled VssBackupHelper.exe
 ```
 
 ## Compatibility Notes
 
-- **PowerShell Version**: This application requires Windows PowerShell 5.1 and will not work with PowerShell 7 (Core)
+- **PowerShell Version**: 
+  - **Module / CLI**: Compatible with both Windows PowerShell 5.1 and PowerShell 7+ (Core).
+  - **WPF GUI**: Requires Windows PowerShell 5.1 (as it relies on WPF and `System.Windows` which is not available in PowerShell Core).
 - **Platform**: Windows-only (uses Windows Management Instrumentation and .NET/COM)
 - **Architecture**: Compatible with both x64 and x86 Windows systems
 
