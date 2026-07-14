@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 [ComImport, Guid("507C37B4-CF5B-4e95-B0AF-14EB9767467E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 public interface IVssAsync
@@ -7,6 +8,35 @@ public interface IVssAsync
     [PreserveSig] int Cancel();
     [PreserveSig] int Wait(int dwMilliseconds = -1);
     [PreserveSig] int QueryStatus(out int pHrResult, out int pReserved);
+}
+
+[ComImport, Guid("01279F1C-2676-4AB4-AE76-4CFF3F6FC81A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IVssExamineWriterMetadata
+{
+    // 1-5
+    void GetIdentity(
+        out Guid pidInstance,
+        out Guid pidWriter,
+        [MarshalAs(UnmanagedType.BStr)] out string wszWriterName,
+        [MarshalAs(UnmanagedType.BStr)] out string wszInstanceName,
+        [MarshalAs(UnmanagedType.BStr)] out string wszUsage,
+        [MarshalAs(UnmanagedType.BStr)] out string wszDataSourceName,
+        [MarshalAs(UnmanagedType.BStr)] out string wszLogFileName,
+        out uint pnFileCount,
+        out uint pnDatabaseCount,
+        out uint pcbDatabaseAltMetadata);
+
+    // Lots of other methods we don't need, but the vtable slots must be present
+    // for the COM interface to be callable. Stub them as void.
+    void _Stub_GetIncludeFiles();
+    void _Stub_GetExcludeFiles();
+    void _Stub_GetComponent();
+    void _Stub_GetRestoreMethods();
+    void _Stub_GetAlternateLocationMapping();
+    void _Stub_GetBackupMetadata();
+    void _Stub_FreeWriterMetadata();
+    void _Stub_LoadFromXML();
+    void _Stub_SaveAsXML();
 }
 
 [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -41,7 +71,7 @@ public interface IVssBackupComponents
     void SetRestoreState(int restoreType);
     void GatherWriterMetadata(out IVssAsync ppAsync);
     void GetWriterMetadataCount(out uint pcWriters);
-    void GetWriterMetadata(uint iWriter, out Guid pidInstance, out IntPtr ppMetadata);
+    void GetWriterMetadata(uint iWriter, out Guid pidInstance, out IVssExamineWriterMetadata ppMetadata);
     void FreeWriterMetadata();
 
     // 11-15
@@ -109,9 +139,16 @@ public class Program
 
     public static int Main(string[] args)
     {
+        if (args.Length >= 1 && args[0] == "--list-writers")
+        {
+            return ListWriters();
+        }
+
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: VssBackupHelper.exe <VolumePath> [Context]");
+            Console.Error.WriteLine("Usage:");
+            Console.Error.WriteLine("  VssBackupHelper.exe <VolumePath> [Context]");
+            Console.Error.WriteLine("  VssBackupHelper.exe --list-writers");
             return 1;
         }
 
@@ -159,7 +196,8 @@ public class Program
             backupComponents.SetBackupState(true, true, 1, false); // 1 = VSS_BT_FULL
 
             IVssAsync asyncObj = null;
-            
+
+            Console.WriteLine("PROGRESS:10:Gathering writer metadata");
             backupComponents.GatherWriterMetadata(out asyncObj);
             if (asyncObj != null)
             {
@@ -181,6 +219,7 @@ public class Program
             Guid snapshotId;
             backupComponents.AddToSnapshotSet(volumePath, Guid.Empty, out snapshotId);
 
+            Console.WriteLine("PROGRESS:40:Preparing writers for backup");
             backupComponents.PrepareForBackup(out asyncObj);
             if (asyncObj != null)
             {
@@ -196,6 +235,7 @@ public class Program
                 }
             }
 
+            Console.WriteLine("PROGRESS:70:Creating shadow copy");
             backupComponents.DoSnapshotSet(out asyncObj);
             if (asyncObj != null)
             {
@@ -244,5 +284,110 @@ public class Program
         }
 
         return 0;
+    }
+
+    public static int ListWriters()
+    {
+        // Enumerates registered VSS writers via the COM API and emits a JSON
+        // array on stdout. Each entry has: name, id, instanceId, state, stateCode.
+        // This is locale-independent (unlike vssadmin output, which is translated).
+        IVssBackupComponents backupComponents = null;
+        try
+        {
+            int hr = CreateVssBackupComponents(out backupComponents);
+            if (!Succeeded(hr) || backupComponents == null)
+            {
+                Console.Error.WriteLine("Failed to create VssBackupComponents. HR: 0x" + hr.ToString("X"));
+                return hr;
+            }
+
+            backupComponents.InitializeForBackup(null);
+
+            IVssAsync asyncObj = null;
+            backupComponents.GatherWriterMetadata(out asyncObj);
+            if (asyncObj != null)
+            {
+                asyncObj.Wait(-1);
+                int queryHr = 0;
+                int reserved = 0;
+                asyncObj.QueryStatus(out queryHr, out reserved);
+                Marshal.ReleaseComObject(asyncObj);
+                if (!Succeeded(queryHr))
+                {
+                    Console.Error.WriteLine("GatherWriterMetadata failed. HR: 0x" + queryHr.ToString("X"));
+                    return queryHr;
+                }
+            }
+
+            uint writerCount = 0;
+            backupComponents.GetWriterMetadataCount(out writerCount);
+
+            var sb = new StringBuilder();
+            sb.Append("[");
+
+            for (uint i = 0; i < writerCount; i++)
+            {
+                Guid idInstance = Guid.Empty;
+                IVssExamineWriterMetadata metadata = null;
+                backupComponents.GetWriterMetadata(i, out idInstance, out metadata);
+                if (metadata == null)
+                {
+                    continue;
+                }
+
+                Guid idWriter = Guid.Empty;
+                string writerName = "";
+                string instanceName = "";
+                string usage = "";
+                string dataSource = "";
+                string logFile = "";
+                uint fileCount = 0;
+                uint databaseCount = 0;
+                uint cbDatabaseAlt = 0;
+                metadata.GetIdentity(out idWriter, out idInstance, out writerName, out instanceName,
+                    out usage, out dataSource, out logFile, out fileCount, out databaseCount, out cbDatabaseAlt);
+
+                if (i > 0) sb.Append(",");
+                sb.Append("{");
+                sb.AppendFormat("\"name\":\"{0}\",", EscapeJson(writerName));
+                sb.AppendFormat("\"id\":\"{0}\",", idWriter.ToString());
+                sb.AppendFormat("\"instanceId\":\"{0}\",", idInstance.ToString());
+                // State isn't returned by IVssExamineWriterMetadata directly. We
+                // surface it as "Unknown" so the PowerShell side can still tell
+                // the entry came from COM. The richer state info is available
+                // from the runtime writer list (IVssWriterComponentsExt) which
+                // requires a deeper COM call we don't make here.
+                sb.Append("\"state\":\"Unknown\",\"stateCode\":0,");
+                sb.AppendFormat("\"instanceName\":\"{0}\",", EscapeJson(instanceName));
+                sb.AppendFormat("\"usage\":\"{0}\"", EscapeJson(usage));
+                sb.Append("}");
+
+                Marshal.ReleaseComObject(metadata);
+            }
+
+            sb.Append("]");
+            Console.WriteLine(sb.ToString());
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("Error: " + ex.Message);
+            Console.Error.WriteLine(ex.StackTrace);
+            return -1;
+        }
+        finally
+        {
+            if (backupComponents != null)
+            {
+                Marshal.ReleaseComObject(backupComponents);
+            }
+        }
+    }
+
+    private static string EscapeJson(string s)
+    {
+        if (s == null) return "";
+        return s.Replace("\\", "\\\\").Replace("\"", "\\\"")
+                .Replace("\n", "\\n").Replace("\r", "\\r").Replace("\t", "\\t");
     }
 }

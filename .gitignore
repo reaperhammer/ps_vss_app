@@ -1,2 +1,5 @@
 # Ignore compiled binaries
 bin/
+
+# Ignore test results
+tests/TestResults.xml

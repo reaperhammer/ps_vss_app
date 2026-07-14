@@ -1,6 +1,8 @@
 # VSS Manager Main Script
 # This contains your actual VSS functions and the WPF application startup
 
+#Requires -Version 5.1
+
 # PowerShell Edition Compatibility Check
 if ($PSVersionTable.PSEdition -eq 'Core' -or $PSVersionTable.PSVersion.Major -ge 6) {
 	Write-Warning "This script is not compatible with PowerShell 7 (Core). Attempting to relaunch in Windows PowerShell 5.1..."
@@ -13,14 +15,21 @@ if ($PSVersionTable.PSEdition -eq 'Core' -or $PSVersionTable.PSVersion.Major -ge
 	exit
 }
 
-# Load your existing main.ps1 functions
+# Load the ps_vss_app module. Prefer the .psd1 manifest; fall back to main.ps1
+# (the backward-compatibility shim that imports the module) so this GUI keeps
+# working in older deployments that haven't received the .psd1 yet.
 $scriptPath = Split-Path $MyInvocation.MyCommand.Path
-$mainScript = Join-Path $scriptPath "main.ps1"
+Set-Location -Path $scriptPath
+[System.IO.Directory]::SetCurrentDirectory($scriptPath)
+$moduleManifest = Join-Path $scriptPath "ps_vss_app.psd1"
+$legacyShim = Join-Path $scriptPath "main.ps1"
 
-if (Test-Path $mainScript) {
-	. $mainScript
+if (Test-Path $moduleManifest) {
+	Import-Module $moduleManifest -Force -DisableNameChecking
+} elseif (Test-Path $legacyShim) {
+	. $legacyShim
 } else {
-	Write-Error "Could not find main.ps1 file"
+	Write-Error "Could not find ps_vss_app.psd1 or main.ps1 in $scriptPath"
 	exit 1
 }
 
@@ -54,17 +63,23 @@ $xaml = @"
 <Window
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="VSS Manager - Volume Shadow Copy Service" 
+        Title="VSS Manager - Volume Shadow Copy Service"
         Height="700" Width="1000"
         MinHeight="600" MinWidth="800"
         WindowStartupLocation="CenterScreen"
-        Background="#F5F5F5"
+        Background="{DynamicResource WindowBackgroundBrush}"
         FontFamily="Segoe UI"
         FontSize="12"
         Icon=".\assets\png\app_icon.png">
-    
+    <Window.ContextMenu>
+        <ContextMenu>
+            <MenuItem Name="menuToggleTheme" Header="Toggle dark mode" InputGestureText="Ctrl+T"/>
+        </ContextMenu>
+    </Window.ContextMenu>
+
     <Window.Resources>
-        <!-- Modern Color Scheme -->
+        <!-- Light theme (default) -->
+        <SolidColorBrush x:Key="WindowBackgroundBrush" Color="#F5F5F5"/>
         <SolidColorBrush x:Key="PrimaryBrush" Color="#2196F3"/>
         <SolidColorBrush x:Key="PrimaryDarkBrush" Color="#1976D2"/>
         <SolidColorBrush x:Key="AccentBrush" Color="#FF4081"/>
@@ -76,44 +91,235 @@ $xaml = @"
         <SolidColorBrush x:Key="SuccessBrush" Color="#4CAF50"/>
         <SolidColorBrush x:Key="WarningBrush" Color="#FF9800"/>
         <SolidColorBrush x:Key="ErrorBrush" Color="#F44336"/>
+        <SolidColorBrush x:Key="AlternatingRowBackgroundBrush" Color="#FAFAFA"/>
+        <SolidColorBrush x:Key="HeaderBackgroundBrush" Color="#F8F9FA"/>
+        <SolidColorBrush x:Key="{x:Static SystemColors.WindowBrushKey}" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="{x:Static SystemColors.WindowTextBrushKey}" Color="#212121"/>
+        <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="{x:Static SystemColors.ControlTextBrushKey}" Color="#212121"/>
+        <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#3399FF"/>
+        <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="#FFFFFF"/>
+        
+        <!-- Default TextBox Style -->
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="6,4"/>
+        </Style>
+        
+        <!-- ComboBox ToggleButton Template -->
+        <ControlTemplate x:Key="ComboBoxToggleButtonTemplate" TargetType="ToggleButton">
+            <Border x:Name="templateRoot" 
+                    Background="{TemplateBinding Background}" 
+                    BorderBrush="{TemplateBinding BorderBrush}" 
+                    BorderThickness="{TemplateBinding BorderThickness}" 
+                    CornerRadius="4">
+                <Grid HorizontalAlignment="Right" Width="24">
+                    <Path x:Name="arrow" 
+                          Data="M 0 0 L 4 4 L 8 0 Z" 
+                          Fill="{DynamicResource TextSecondaryBrush}" 
+                          HorizontalAlignment="Center" 
+                          VerticalAlignment="Center"/>
+                </Grid>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="templateRoot" Property="Background" Value="{DynamicResource BorderBrush}"/>
+                </Trigger>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter TargetName="templateRoot" Property="Background" Value="{DynamicResource BorderBrush}"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <!-- Default ComboBox Style -->
+        <Style TargetType="ComboBox">
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="ScrollViewer.CanContentScroll" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid x:Name="templateRoot">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="0"/>
+                            </Grid.ColumnDefinitions>
+                            
+                            <!-- Dropdown toggle button -->
+                            <ToggleButton Grid.ColumnSpan="2" 
+                                          Background="{TemplateBinding Background}" 
+                                          BorderBrush="{TemplateBinding BorderBrush}" 
+                                          BorderThickness="{TemplateBinding BorderThickness}" 
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}" 
+                                          Template="{StaticResource ComboBoxToggleButtonTemplate}"
+                                          Focusable="False"/>
+                            
+                            <!-- Content area (selected item) -->
+                            <ContentPresenter x:Name="contentPresenter" 
+                                              Content="{TemplateBinding SelectionBoxItem}" 
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" 
+                                              ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}" 
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" 
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}" 
+                                              Margin="{TemplateBinding Padding}" 
+                                              IsHitTestVisible="False"/>
+                            
+                            <!-- Dropdown popup -->
+                            <Popup x:Name="PART_Popup" 
+                                   AllowsTransparency="True" 
+                                   Grid.ColumnSpan="2" 
+                                   IsOpen="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}" 
+                                   Placement="Bottom" 
+                                   PopupAnimation="{DynamicResource {x:Static SystemParameters.ComboBoxPopupAnimationKey}}">
+                                <Border x:Name="dropDownBorder" 
+                                        Background="{DynamicResource SurfaceBrush}" 
+                                        BorderBrush="{DynamicResource BorderBrush}" 
+                                        BorderThickness="1" 
+                                        CornerRadius="4" 
+                                        MinWidth="{Binding ActualWidth, ElementName=templateRoot}" 
+                                        MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <ScrollViewer x:Name="DropDownScrollViewer">
+                                        <Grid x:Name="grid" RenderOptions.ClearTypeHint="Enabled">
+                                            <Canvas x:Name="canvas" HorizontalAlignment="Left" Height="0" VerticalAlignment="Top" Width="0">
+                                                <Rectangle x:Name="opaqueRect" 
+                                                           Fill="{Binding Background, ElementName=dropDownBorder}" 
+                                                           Height="{Binding ActualHeight, ElementName=dropDownBorder}" 
+                                                           Width="{Binding ActualWidth, ElementName=dropDownBorder}"/>
+                                            </Canvas>
+                                            <ItemsPresenter x:Name="ItemsPresenter" 
+                                                            KeyboardNavigation.DirectionalNavigation="Contained" 
+                                                            SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+                                        </Grid>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <!-- Default ComboBoxItem Style -->
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        
+        <!-- Default CheckBox Style -->
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+        </Style>
+        
+        <!-- Default TextBlock Style -->
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+        </Style>
         
         <!-- Modern Button Style -->
         <Style x:Key="ModernButtonStyle" TargetType="Button">
-            <Setter Property="Background" Value="{StaticResource PrimaryBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource PrimaryBrush}"/>
             <Setter Property="Foreground" Value="White"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Padding" Value="16,8"/>
             <Setter Property="Margin" Value="4"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" 
+                                Background="{TemplateBinding Background}" 
+                                BorderBrush="{TemplateBinding BorderBrush}" 
+                                BorderThickness="{TemplateBinding BorderThickness}" 
+                                CornerRadius="4" 
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{DynamicResource PrimaryDarkBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{DynamicResource PrimaryDarkBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="border" Property="Background" Value="{DynamicResource BorderBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         
         <!-- Modern TabControl Style -->
         <Style x:Key="ModernTabControlStyle" TargetType="TabControl">
-            <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
         </Style>
         
         <!-- Modern TabItem Style -->
         <Style x:Key="ModernTabItemStyle" TargetType="TabItem">
-            <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
-            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource BackgroundBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Padding" Value="20,12"/>
             <Setter Property="Margin" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="border" 
+                                Background="{TemplateBinding Background}" 
+                                BorderBrush="{DynamicResource BorderBrush}" 
+                                BorderThickness="1,1,1,0" 
+                                Padding="{TemplateBinding Padding}" 
+                                Margin="0,0,2,0" 
+                                CornerRadius="4,4,0,0">
+                            <ContentPresenter x:Name="contentPresenter" 
+                                              ContentSource="Header" 
+                                              HorizontalAlignment="Center" 
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                                <Setter TargetName="border" Property="BorderThickness" Value="1,1,1,0"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{DynamicResource BorderBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         
         <!-- Modern DataGrid Style -->
         <Style x:Key="ModernDataGridStyle" TargetType="DataGrid">
-            <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="GridLinesVisibility" Value="Horizontal"/>
-            <Setter Property="HorizontalGridLinesBrush" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource BorderBrush}"/>
             <Setter Property="VerticalGridLinesBrush" Value="Transparent"/>
-            <Setter Property="RowBackground" Value="{StaticResource SurfaceBrush}"/>
-            <Setter Property="AlternatingRowBackground" Value="#FAFAFA"/>
+            <Setter Property="RowBackground" Value="{DynamicResource SurfaceBrush}"/>
+            <Setter Property="AlternatingRowBackground" Value="{DynamicResource AlternatingRowBackgroundBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
             <Setter Property="HeadersVisibility" Value="Column"/>
             <Setter Property="SelectionMode" Value="Extended"/>
             <Setter Property="SelectionUnit" Value="FullRow"/>
@@ -128,11 +334,11 @@ $xaml = @"
         
         <!-- Modern DataGridColumnHeader Style -->
         <Style x:Key="ModernDataGridColumnHeaderStyle" TargetType="DataGridColumnHeader">
-            <Setter Property="Background" Value="#F8F9FA"/>
-            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource HeaderBackgroundBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Padding" Value="12,8"/>
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
             <Setter Property="BorderThickness" Value="0,0,1,1"/>
         </Style>
     </Window.Resources>
@@ -145,24 +351,24 @@ $xaml = @"
         </Grid.RowDefinitions>
         
         <!-- Header Section -->
-        <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" 
-                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1"
+        <Border Grid.Row="0" Background="{DynamicResource SurfaceBrush}" 
+                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1"
                 Padding="20,16">
             <StackPanel>
                 <TextBlock Text="Volume Shadow Copy Service Manager" 
                           FontSize="20" FontWeight="Bold" 
-                          Foreground="{StaticResource TextPrimaryBrush}"/>
+                          Foreground="{DynamicResource TextPrimaryBrush}"/>
                 <TextBlock Text="Manage volume shadow copies and system snapshots" 
                           FontSize="12" 
-                          Foreground="{StaticResource TextSecondaryBrush}"
+                          Foreground="{DynamicResource TextSecondaryBrush}"
                           Margin="0,4,0,0"/>
             </StackPanel>
         </Border>
         
         <!-- Main Content -->
-        <TabControl Grid.Row="1" Style="{StaticResource ModernTabControlStyle}" Margin="0">
+        <TabControl Name="mainTabControl" Grid.Row="1" Style="{DynamicResource ModernTabControlStyle}" Margin="0">
             <!-- Volume Management Tab -->
-            <TabItem Style="{StaticResource ModernTabItemStyle}">
+            <TabItem Style="{DynamicResource ModernTabItemStyle}">
                 <TabItem.Header>
                     <StackPanel Orientation="Horizontal">
                         <Image Source=".\assets\png\volume.png" Width="16" Height="16" Margin="0,0,8,0"/>
@@ -177,11 +383,11 @@ $xaml = @"
                     </Grid.RowDefinitions>
                     
                     <!-- Volume Management Toolbar -->
-                    <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" 
-                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                    <Border Grid.Row="0" Background="{DynamicResource SurfaceBrush}" 
+                            BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
                             CornerRadius="4" Padding="16" Margin="0,0,0,16">
                         <StackPanel Orientation="Horizontal">
-                            <Button Name="btnRefreshVolumes" Style="{StaticResource ModernButtonStyle}"
+                            <Button Name="btnRefreshVolumes" Style="{DynamicResource ModernButtonStyle}"
                                     Width="140" Height="36">
                                 <StackPanel Orientation="Horizontal">
                                     <Image Source=".\assets\png\refresh.png" Width="16" Height="16" Margin="0,0,8,0"/>
@@ -190,14 +396,14 @@ $xaml = @"
                             </Button>
                             <TextBlock Text="Select a volume to view and manage its shadow copies" 
                                       VerticalAlignment="Center" 
-                                      Foreground="{StaticResource TextSecondaryBrush}"
+                                      Foreground="{DynamicResource TextSecondaryBrush}"
                                       Margin="16,0,0,0"/>
                         </StackPanel>
                     </Border>
                     
                     <!-- Volumes DataGrid -->
                     <DataGrid Name="dgVolumes" Grid.Row="1" 
-                              Style="{StaticResource ModernDataGridStyle}">
+                              Style="{DynamicResource ModernDataGridStyle}">
                         <DataGrid.ColumnHeaderStyle>
                             <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource ModernDataGridColumnHeaderStyle}"/>
                         </DataGrid.ColumnHeaderStyle>
@@ -229,7 +435,7 @@ $xaml = @"
                                             <TextBlock Text="{Binding UsagePercentText}" 
                                                       VerticalAlignment="Center"
                                                       FontSize="10"
-                                                      Foreground="{StaticResource TextSecondaryBrush}"/>
+                                                      Foreground="{DynamicResource TextSecondaryBrush}"/>
                                         </StackPanel>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
@@ -241,8 +447,8 @@ $xaml = @"
                     </DataGrid>
                     
                     <!-- Shadow Storage Management Panel -->
-                    <Border Grid.Row="2" Background="{StaticResource SurfaceBrush}" 
-                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                    <Border Grid.Row="2" Background="{DynamicResource SurfaceBrush}" 
+                            BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
                             CornerRadius="4" Padding="16" Margin="0,16,0,0"
                             Name="panelShadowStorage" Visibility="Collapsed">
                         <Grid>
@@ -275,7 +481,7 @@ $xaml = @"
                                 </ComboBox>
                                 <CheckBox Grid.Column="3" Name="chkUnlimited" Content="Unlimited" VerticalAlignment="Center" Margin="0,0,16,0"/>
                                 
-                                <Button Grid.Column="4" Name="btnSaveStorage" Style="{StaticResource ModernButtonStyle}" Width="100" Height="28" HorizontalAlignment="Left">
+                                <Button Grid.Column="4" Name="btnSaveStorage" Style="{DynamicResource ModernButtonStyle}" Width="100" Height="28" HorizontalAlignment="Left">
                                     <TextBlock Text="Save Limit" VerticalAlignment="Center"/>
                                 </Button>
                             </Grid>
@@ -285,7 +491,7 @@ $xaml = @"
             </TabItem>
             
             <!-- Shadow Copy Operations Tab -->
-            <TabItem Style="{StaticResource ModernTabItemStyle}">
+            <TabItem Style="{DynamicResource ModernTabItemStyle}">
                 <TabItem.Header>
                     <StackPanel Orientation="Horizontal">
                         <Image Source=".\assets\png\shadowcopy.png" Width="16" Height="16" Margin="0,0,8,0"/>
@@ -300,47 +506,55 @@ $xaml = @"
                     </Grid.RowDefinitions>
                     
                     <!-- Shadow Copy Management Toolbar -->
-                    <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" 
-                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                    <Border Grid.Row="0" Background="{DynamicResource SurfaceBrush}" 
+                            BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
                             CornerRadius="4" Padding="16" Margin="0,0,0,16">
                         <StackPanel>
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                                <Button Name="btnRefreshShadowCopies" Style="{StaticResource ModernButtonStyle}"
+                                <Button Name="btnRefreshShadowCopies" Style="{DynamicResource ModernButtonStyle}"
                                         Width="100" Height="36" Margin="0,0,8,0">
                                     <StackPanel Orientation="Horizontal">
                                         <Image Source=".\assets\png\refresh.png" Width="16" Height="16" Margin="0,0,4,0"/>
                                         <TextBlock Text="Refresh" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
-                                <Button Name="btnCreateShadowCopy" Style="{StaticResource ModernButtonStyle}"
-                                        Width="160" Height="36" Margin="0,0,8,0">
+                                <Button Name="btnCreateShadowCopy" Style="{DynamicResource ModernButtonStyle}"
+                                        Width="180" Height="36" Margin="0,0,8,0">
                                     <StackPanel Orientation="Horizontal">
                                         <Image Source=".\assets\png\create.png" Width="16" Height="16" Margin="0,0,4,0"/>
                                         <TextBlock Text="Create Shadow Copy" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
-                                <TextBlock Text="Context:" VerticalAlignment="Center" Margin="8,0,4,0" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                <TextBlock Text="Context:" VerticalAlignment="Center" Margin="8,0,4,0" Foreground="{DynamicResource TextSecondaryBrush}"/>
                                 <ComboBox Name="cmbContext" Width="140" Height="36" SelectedIndex="0" VerticalAlignment="Center" Margin="0,0,16,0">
                                     <ComboBoxItem Content="ClientAccessible"/>
                                     <ComboBoxItem Content="Backup"/>
                                 </ComboBox>
-                                <Button Name="btnDeleteShadowCopy" Style="{StaticResource ModernButtonStyle}"
+                                <Button Name="btnDeleteShadowCopy" Style="{DynamicResource ModernButtonStyle}"
                                         Width="140" Height="36">
                                     <StackPanel Orientation="Horizontal">
                                         <Image Source=".\assets\png\delete.png" Width="16" Height="16" Margin="0,0,4,0"/>
                                         <TextBlock Text="Delete Selected" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
+                                <Button Name="btnExportShadowCopies" Style="{DynamicResource ModernButtonStyle}"
+                                        Width="100" Height="36" Margin="8,0,0,0"
+                                        ToolTip="Export current shadow copies to CSV or JSON (Ctrl+E)">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Image Source=".\assets\png\copy.png" Width="16" Height="16" Margin="0,0,4,0"/>
+                                        <TextBlock Text="Export" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
                             </StackPanel>
                             <TextBlock Name="txtSelectedVolume" Text="No volumes selected" 
-                                      Foreground="{StaticResource TextSecondaryBrush}"
+                                      Foreground="{DynamicResource TextSecondaryBrush}"
                                       FontStyle="Italic"/>
                         </StackPanel>
                     </Border>
                     
                     <!-- Shadow Copies DataGrid -->
                     <DataGrid Name="dgShadowCopies" Grid.Row="1" 
-                              Style="{StaticResource ModernDataGridStyle}">
+                              Style="{DynamicResource ModernDataGridStyle}">
                         <DataGrid.ColumnHeaderStyle>
                             <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource ModernDataGridColumnHeaderStyle}"/>
                         </DataGrid.ColumnHeaderStyle>
@@ -371,8 +585,8 @@ $xaml = @"
                     </DataGrid>
                     
                     <!-- Mount Control Panel -->
-                    <Border Grid.Row="2" Background="{StaticResource SurfaceBrush}" 
-                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                    <Border Grid.Row="2" Background="{DynamicResource SurfaceBrush}" 
+                            BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
                             CornerRadius="4" Padding="16" Margin="0,16,0,0"
                             Name="panelMount" Visibility="Collapsed">
                         <Grid>
@@ -398,13 +612,13 @@ $xaml = @"
                                 
                                 <TextBlock Grid.Column="0" Text="Mount Folder:" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                 <TextBox Grid.Column="1" Name="txtMountPath" Text="C:\ps_vss_app\mountpoint" Height="28" Width="220" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                <Button Grid.Column="2" Name="btnMount" Style="{StaticResource ModernButtonStyle}" Width="80" Height="28" Margin="0,0,8,0">
+                                <Button Grid.Column="2" Name="btnMount" Style="{DynamicResource ModernButtonStyle}" Width="80" Height="28" Margin="0,0,8,0">
                                     <TextBlock Text="Mount" VerticalAlignment="Center"/>
                                 </Button>
-                                <Button Grid.Column="3" Name="btnBrowseMount" Style="{StaticResource ModernButtonStyle}" Width="80" Height="28" Margin="0,0,8,0" IsEnabled="False">
+                                <Button Grid.Column="3" Name="btnBrowseMount" Style="{DynamicResource ModernButtonStyle}" Width="80" Height="28" Margin="0,0,8,0" IsEnabled="False">
                                     <TextBlock Text="Browse" VerticalAlignment="Center"/>
                                 </Button>
-                                <Button Grid.Column="4" Name="btnDismount" Style="{StaticResource ModernButtonStyle}" Width="80" Height="28" Margin="0,0,8,0" IsEnabled="False">
+                                <Button Grid.Column="4" Name="btnDismount" Style="{DynamicResource ModernButtonStyle}" Width="80" Height="28" Margin="0,0,8,0" IsEnabled="False">
                                     <TextBlock Text="Dismount" VerticalAlignment="Center"/>
                                 </Button>
                             </Grid>
@@ -414,7 +628,7 @@ $xaml = @"
             </TabItem>
             
             <!-- VSS Writers Tab -->
-            <TabItem Style="{StaticResource ModernTabItemStyle}">
+            <TabItem Style="{DynamicResource ModernTabItemStyle}">
                 <TabItem.Header>
                     <StackPanel Orientation="Horizontal">
                         <Image Source=".\assets\png\properties.png" Width="16" Height="16" Margin="0,0,8,0"/>
@@ -428,11 +642,11 @@ $xaml = @"
                     </Grid.RowDefinitions>
                     
                     <!-- VSS Writers Toolbar -->
-                    <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" 
-                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                    <Border Grid.Row="0" Background="{DynamicResource SurfaceBrush}" 
+                            BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
                             CornerRadius="4" Padding="16" Margin="0,0,0,16">
                         <StackPanel Orientation="Horizontal">
-                            <Button Name="btnRefreshWriters" Style="{StaticResource ModernButtonStyle}"
+                            <Button Name="btnRefreshWriters" Style="{DynamicResource ModernButtonStyle}"
                                     Width="140" Height="36">
                                 <StackPanel Orientation="Horizontal">
                                     <Image Source=".\assets\png\refresh.png" Width="16" Height="16" Margin="0,0,8,0"/>
@@ -441,14 +655,14 @@ $xaml = @"
                             </Button>
                             <TextBlock Name="txtWritersStatus" Text="Ready" 
                                       VerticalAlignment="Center" 
-                                      Foreground="{StaticResource TextSecondaryBrush}"
+                                      Foreground="{DynamicResource TextSecondaryBrush}"
                                       Margin="16,0,0,0"/>
                         </StackPanel>
                     </Border>
                     
                     <!-- VSS Writers DataGrid -->
                     <DataGrid Name="dgWriters" Grid.Row="1" 
-                               Style="{StaticResource ModernDataGridStyle}">
+                               Style="{DynamicResource ModernDataGridStyle}">
                         <DataGrid.ColumnHeaderStyle>
                             <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource ModernDataGridColumnHeaderStyle}"/>
                         </DataGrid.ColumnHeaderStyle>
@@ -480,8 +694,8 @@ $xaml = @"
         </TabControl>
         
         <!-- Status Bar -->
-        <Border Grid.Row="2" Background="{StaticResource SurfaceBrush}" 
-                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0"
+        <Border Grid.Row="2" Background="{DynamicResource SurfaceBrush}" 
+                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0"
                 Padding="20,8">
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -490,16 +704,16 @@ $xaml = @"
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Name="txtStatus" Text="Ready" 
-                              Foreground="{StaticResource TextSecondaryBrush}"
+                              Foreground="{DynamicResource TextSecondaryBrush}"
                               VerticalAlignment="Center"/>
                     <ProgressBar Name="progressBar" Width="200" Height="4" 
                                 Margin="16,0,0,0" 
-                                Background="{StaticResource BorderBrush}"
-                                Foreground="{StaticResource PrimaryBrush}"
+                                Background="{DynamicResource BorderBrush}"
+                                Foreground="{DynamicResource PrimaryBrush}"
                                 Visibility="Collapsed"/>
                 </StackPanel>
-                <TextBlock Grid.Column="1" Text="VSS Manager v1.0" 
-                          Foreground="{StaticResource TextSecondaryBrush}"
+                <TextBlock Grid.Column="1" Text="VSS Manager v1.1.0" 
+                          Foreground="{DynamicResource TextSecondaryBrush}"
                           VerticalAlignment="Center"/>
             </Grid>
         </Border>
@@ -530,7 +744,7 @@ function Load-Xaml {
 	
 	# Check if PNG files exist and prepare safe XAML asset references.
 	# Missing Image sources are non-fatal, but a missing Window.Icon causes XamlReader.Parse() to fail.
-	$requiredFiles = @("refresh.png", "create.png", "delete.png", "volume.png", "shadowcopy.png", "app_icon.png")
+	$requiredFiles = @("refresh.png", "create.png", "delete.png", "volume.png", "shadowcopy.png", "app_icon.png", "copy.png", "explorer.png")
 	$xamlWithPaths = $xaml
 	foreach ($file in $requiredFiles) {
 		$filePath = Join-Path $assetsPath $file
@@ -1061,7 +1275,102 @@ $window.FindName("btnDismount").Add_Click({
 	}
 })
 
-# Auto-refresh volumes and writers at startup (using dispatcher to run after UI is fully rendered)
+# Export current shadow copies (or writers, depending on active tab) to CSV/JSON
+$window.FindName("btnExportShadowCopies").Add_Click({
+	try {
+		$volumes = @($script:selectedVolumes)
+		if ($volumes.Count -eq 0) {
+			[System.Windows.MessageBox]::Show("Select at least one volume first.", "Information", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information) | Out-Null
+			return
+		}
+
+		$dlg = New-Object Microsoft.Win32.SaveFileDialog
+		$dlg.Title = "Export VSS data"
+		$dlg.Filter = "CSV files (*.csv)|*.csv|JSON files (*.json)|*.json"
+		$dlg.FileName = "vss-export.csv"
+		if ($dlg.ShowDialog() -ne $true) { return }
+
+		$ext = [System.IO.Path]::GetExtension($dlg.FileName).ToLower()
+		$kind = if ($ext -eq ".json") { "JSON" } else { "CSV" }
+		$firstVol = $volumes[0]
+		$count = Export-VSSReport -Kind ShadowCopies -VolumePath $firstVol.DeviceID -Path $dlg.FileName -Format $kind -ErrorAction Stop
+		Hide-Progress "Exported $count shadow copies to $($dlg.FileName)"
+		[System.Windows.MessageBox]::Show("Exported $count shadow copies to:`n$($dlg.FileName)", "Export complete", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information) | Out-Null
+	} catch {
+		Hide-Progress "Export failed"
+		[System.Windows.MessageBox]::Show("Export failed: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error) | Out-Null
+	}
+})
+
+# Dark mode toggle. We swap a handful of the most visible brushes; the XAML uses
+# {DynamicResource ...} for the ones we toggle so the change is picked up live.
+# Most DataGrid styles still use {StaticResource ...} for performance; in a future
+# release they should be migrated as well.
+$script:darkMode = $false
+function Set-VSSGuiTheme {
+	param([bool]$Dark)
+
+	if ($Dark) {
+		$palette = @{
+			'WindowBackgroundBrush' = '#1E1E1E'
+			'BackgroundBrush'       = '#1E1E1E'
+			'SurfaceBrush'          = '#2D2D30'
+			'TextPrimaryBrush'      = '#E6E6E6'
+			'TextSecondaryBrush'    = '#A0A0A0'
+			'BorderBrush'           = '#3F3F46'
+			'AlternatingRowBackgroundBrush' = '#333337'
+			'HeaderBackgroundBrush' = '#252526'
+			([System.Windows.SystemColors]::WindowBrushKey)      = '#2D2D30'
+			([System.Windows.SystemColors]::WindowTextBrushKey)  = '#E6E6E6'
+			([System.Windows.SystemColors]::ControlBrushKey)     = '#2D2D30'
+			([System.Windows.SystemColors]::ControlTextBrushKey) = '#E6E6E6'
+			([System.Windows.SystemColors]::HighlightBrushKey)   = '#3F3F46'
+			([System.Windows.SystemColors]::HighlightTextBrushKey) = '#FFFFFF'
+		}
+	} else {
+		$palette = @{
+			'WindowBackgroundBrush' = '#F5F5F5'
+			'BackgroundBrush'       = '#F5F5F5'
+			'SurfaceBrush'          = '#FFFFFF'
+			'TextPrimaryBrush'      = '#212121'
+			'TextSecondaryBrush'    = '#757575'
+			'BorderBrush'           = '#E0E0E0'
+			'AlternatingRowBackgroundBrush' = '#FAFAFA'
+			'HeaderBackgroundBrush' = '#F8F9FA'
+			([System.Windows.SystemColors]::WindowBrushKey)      = '#FFFFFF'
+			([System.Windows.SystemColors]::WindowTextBrushKey)  = '#212121'
+			([System.Windows.SystemColors]::ControlBrushKey)     = '#FFFFFF'
+			([System.Windows.SystemColors]::ControlTextBrushKey) = '#212121'
+			([System.Windows.SystemColors]::HighlightBrushKey)   = '#3399FF'
+			([System.Windows.SystemColors]::HighlightTextBrushKey) = '#FFFFFF'
+		}
+	}
+
+	foreach ($key in $palette.Keys) {
+		$color = [System.Windows.Media.ColorConverter]::ConvertFromString($palette[$key])
+		$newBrush = New-Object System.Windows.Media.SolidColorBrush($color)
+		$window.Resources.Remove($key)
+		$window.Resources.Add($key, $newBrush)
+	}
+	$script:darkMode = $Dark
+	$window.Title = if ($Dark) { "VSS Manager - Volume Shadow Copy Service (Dark)" } else { "VSS Manager - Volume Shadow Copy Service" }
+}
+
+# Right-click the window background to toggle dark mode; Ctrl+T also works.
+$menuToggleTheme = $window.FindName("menuToggleTheme")
+if ($menuToggleTheme) {
+	$menuToggleTheme.Add_Click({ Set-VSSGuiTheme -Dark (-not $script:darkMode) })
+}
+$window.Add_PreviewKeyDown({
+	param($sender, $e)
+	$ctrl = ($e.KeyboardDevice.Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0
+	if ($ctrl -and $e.Key -eq 'T') {
+		Set-VSSGuiTheme -Dark (-not $script:darkMode)
+		$e.Handled = $true
+	}
+})
+
+# Auto-refresh volumes and writers at startup (using dispatcher to run after UI is yet to render)
 $window.Dispatcher.BeginInvoke([Action]{
 	$window.FindName("btnRefreshVolumes").RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
 	$window.FindName("btnRefreshWriters").RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
@@ -1085,4 +1394,58 @@ $window.Dispatcher.BeginInvoke([Action]{
 })
 
 # Show the window
+
+# Keyboard shortcuts: F5 refresh, Ctrl+N new shadow copy, Del delete selected,
+# Ctrl+E export. Wired via the window's PreviewKeyDown so they work no matter
+# which control has focus.
+$window.Add_PreviewKeyDown({
+	param($sender, $e)
+
+	$ctrl = ($e.KeyboardDevice.Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0
+	$shift = ($e.KeyboardDevice.Modifiers -band [System.Windows.Input.ModifierKeys]::Shift) -ne 0
+
+	switch ($e.Key) {
+		'F5' {
+			try {
+				$btn = $window.FindName("btnRefreshVolumes")
+				if ($btn -and $btn.IsEnabled) {
+					$btn.RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
+					$e.Handled = $true
+				}
+			} catch { }
+		}
+		'N' {
+			if ($ctrl) {
+				try {
+					$btn = $window.FindName("btnCreateShadowCopy")
+					if ($btn -and $btn.IsEnabled) {
+						$btn.RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
+						$e.Handled = $true
+					}
+				} catch { }
+			}
+		}
+		'Delete' {
+			try {
+				$btn = $window.FindName("btnDeleteShadowCopy")
+				if ($btn -and $btn.IsEnabled) {
+					$btn.RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
+					$e.Handled = $true
+				}
+			} catch { }
+		}
+		'E' {
+			if ($ctrl) {
+				try {
+					$btn = $window.FindName("btnExportShadowCopies")
+					if ($btn) {
+						$btn.RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
+						$e.Handled = $true
+					}
+				} catch { }
+			}
+		}
+	}
+})
+
 $window.ShowDialog() | Out-Null
